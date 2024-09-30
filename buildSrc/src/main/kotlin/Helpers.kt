@@ -164,38 +164,6 @@ fun Project.setupKotlinCommon() {
 
 fun Project.setupAppCommon() {
     setupKotlinCommon()
-
-    val lp = requireLocalProperties()
-    val keystorePwd = lp.getProperty("KEYSTORE_PASS") ?: System.getenv("KEYSTORE_PASS")
-    val alias = lp.getProperty("ALIAS_NAME") ?: System.getenv("ALIAS_NAME")
-    val pwd = lp.getProperty("ALIAS_PASS") ?: System.getenv("ALIAS_PASS")
-
-    androidApp.apply {
-        if (keystorePwd != null) {
-            signingConfigs {
-                create("release") {
-                    storeFile = rootProject.file("release.keystore")
-                    storePassword = keystorePwd
-                    keyAlias = alias
-                    keyPassword = pwd
-                    enableV1Signing = true
-                    enableV2Signing = true
-                    enableV3Signing = true
-                }
-            }
-        } else if (requireFlavor().contains("FossRelease")) {
-            exitProcess(0)
-        }
-        buildTypes {
-            val key = signingConfigs.findByName("release")
-            if (key != null) {
-                if (requireTargetAbi().isBlank()) {
-                    getByName("release").signingConfig = key
-                }
-                getByName("debug").signingConfig = key
-            }
-        }
-    }
 }
 
 fun Project.setupApp() {
