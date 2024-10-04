@@ -36,7 +36,7 @@ func LogClear() {
 
 var platformLogWrapper *logWriter
 
-func setupLog(maxSize int64, path string, enableLog, notTruncateOnStart bool) (err error) {
+func setupLog(maxSize int64, path string, level log.Level, notTruncateOnStart bool) (err error) {
 	if platformLogWrapper != nil {
 		return
 	}
@@ -72,8 +72,8 @@ func setupLog(maxSize int64, path string, enableLog, notTruncateOnStart bool) (e
 	}
 
 	platformLogWrapper = &logWriter{
-		disable: !enableLog,
-		writer:  file,
+		level:  level,
+		writer: file,
 	}
 	log.SetStdLogger(log.NewDefaultFactory(
 		context.Background(),
@@ -97,8 +97,8 @@ func setupLog(maxSize int64, path string, enableLog, notTruncateOnStart bool) (e
 var _ log.PlatformWriter = (*logWriter)(nil)
 
 type logWriter struct {
-	disable bool
-	writer  io.Writer
+	level  log.Level
+	writer io.Writer
 }
 
 func (w *logWriter) DisableColors() bool {
@@ -107,14 +107,17 @@ func (w *logWriter) DisableColors() bool {
 
 const LogSplitFlag = "\n\n"
 
-func (w *logWriter) WriteMessage(_ log.Level, message string) {
+func (w *logWriter) WriteMessage(level log.Level, message string) {
+	if level > w.level {
+		return
+	}
 	_, _ = io.WriteString(w.writer, LogSplitFlag+message)
 }
 
 var _ io.Writer = (*logWriter)(nil)
 
 func (w *logWriter) Write(p []byte) (n int, err error) {
-	if w.disable || w.writer == nil {
+	if w.writer == nil {
 		return len(p), nil
 	}
 
