@@ -72,10 +72,9 @@ func setupLog(maxSize int64, path string, level log.Level, notTruncateOnStart bo
 	}
 
 	platformLogWrapper = &logWriter{
-		level:  level,
 		writer: file,
 	}
-	log.SetStdLogger(log.NewDefaultFactory(
+	factory := log.NewDefaultFactory(
 		context.Background(),
 		log.Formatter{
 			BaseTime:         time.Now(),
@@ -86,7 +85,9 @@ func setupLog(maxSize int64, path string, level log.Level, notTruncateOnStart bo
 		"",
 		platformLogWrapper,
 		false,
-	).Logger())
+	)
+	factory.SetLevel(level)
+	log.SetStdLogger(factory.Logger())
 	// setup std log
 	stdlog.SetFlags(stdlog.LstdFlags | stdlog.LUTC)
 	stdlog.SetOutput(platformLogWrapper)
@@ -97,7 +98,6 @@ func setupLog(maxSize int64, path string, level log.Level, notTruncateOnStart bo
 var _ log.PlatformWriter = (*logWriter)(nil)
 
 type logWriter struct {
-	level  log.Level
 	writer io.Writer
 }
 
@@ -107,10 +107,7 @@ func (w *logWriter) DisableColors() bool {
 
 const LogSplitFlag = "\n\n"
 
-func (w *logWriter) WriteMessage(level log.Level, message string) {
-	if level > w.level {
-		return
-	}
+func (w *logWriter) WriteMessage(_ log.Level, message string) {
 	_, _ = io.WriteString(w.writer, LogSplitFlag+message)
 }
 

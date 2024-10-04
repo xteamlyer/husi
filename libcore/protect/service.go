@@ -64,6 +64,9 @@ func (p *Protect) Start() error {
 }
 
 func (p *Protect) loop() {
+	stop := context.AfterFunc(p.ctx, func() {
+		_ = p.Close()
+	})
 	p.logger.DebugContext(p.ctx, "Protect: start loop")
 	for {
 		select {
@@ -75,6 +78,7 @@ func (p *Protect) loop() {
 		}
 		conn, err := p.listener.Accept()
 		if err != nil {
+			stop()
 			p.NewError(p.ctx, err)
 			return
 		}
