@@ -22,10 +22,16 @@ import fr.husi.proto.v1.GetCertMode
 import fr.husi.proto.v1.GetClientMetadataResponse
 import fr.husi.proto.v1.GetDaemonInfoResponse
 import fr.husi.proto.v1.GetVersionResponse
+import fr.husi.proto.v1.HTTPFetchRequest
+import fr.husi.proto.v1.HTTPFetchResponse
+import fr.husi.proto.v1.PingProtocol
 import fr.husi.proto.v1.PluginProcessSpec
+import fr.husi.proto.v1.AndroidVPNType
+import fr.husi.proto.v1.RootCertificateStore
 import fr.husi.proto.v1.SchemaKind
 import fr.husi.proto.v1.StartServiceRequest
 import fr.husi.proto.v1.URLTestOptions
+import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.awaitCancellation
@@ -97,7 +103,12 @@ open class FakeCoreClient : CoreClient {
     var submitOpenVPNThrowable: Throwable? = null
     var cancelOpenVPNThrowable: Throwable? = null
 
-    override suspend fun getVersion(): GetVersionResponse = GetVersionResponse.getDefaultInstance()
+    override suspend fun getVersion(): GetVersionResponse {
+        getVersionCalls += 1
+        getVersionThrowable?.let { throw it }
+        return nextVersion
+    }
+
     override suspend fun getDaemonVersion(): Version = nextDaemonVersion
     override suspend fun getStartedAt(): Long = nextStartedAt
     override suspend fun daemonUrlTest(outboundTag: String) {
@@ -105,6 +116,9 @@ open class FakeCoreClient : CoreClient {
         daemonUrlTestCalls += 1
     }
 
+    var nextVersion: GetVersionResponse = GetVersionResponse.getDefaultInstance()
+    var getVersionCalls: Int = 0
+    var getVersionThrowable: Throwable? = null
     var nextDaemonVersion: Version = Version.getDefaultInstance()
     var nextStartedAt: Long = 0L
     var lastDaemonUrlTestTag: String? = null
@@ -129,6 +143,7 @@ open class FakeCoreClient : CoreClient {
     ): Int = 0
 
     override suspend fun checkConfig(config: String) = Unit
+    override suspend fun formatConfig(config: String): String = config
     override suspend fun generateSchema(kind: SchemaKind): String = "{}"
     override suspend fun getCert(
         server: String,
@@ -227,6 +242,24 @@ open class FakeCoreClient : CoreClient {
             throw throwable
         }
     }
+
+    var lastHttpFetch: HTTPFetchRequest? = null
+        private set
+    var httpFetchResponses: List<HTTPFetchResponse> = emptyList()
+    var httpFetchThrowable: Throwable? = null
+
+    override fun httpFetch(request: HTTPFetchRequest): Flow<HTTPFetchResponse> {
+        lastHttpFetch = request
+        return replay(httpFetchResponses, httpFetchThrowable)
+    }
+
+    override suspend fun ping(protocol: PingProtocol, address: String, port: Int, timeoutMs: Int): Int = 0
+
+    override suspend fun matchRuleSets(dir: File, keyword: String): List<String> = emptyList()
+
+    override suspend fun getRootCertificates(store: RootCertificateStore): String = ""
+
+    override suspend fun readAndroidVPNType(apkPaths: List<String>): AndroidVPNType? = null
 
     override suspend fun resetNetwork() = Unit
     override suspend fun runTask(taskId: String) = Unit

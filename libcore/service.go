@@ -8,7 +8,6 @@ import (
 
 	"github.com/xchacha20-poly1305/husi/libcore/v2/coresvc"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/pb/husi/v1"
-	"github.com/xchacha20-poly1305/husi/libcore/v2/plugin/pluginoption"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/pluginpool"
 )
 
@@ -37,14 +36,13 @@ func (s *Service) buildHost() (*coresvc.Host, error) {
 
 	application := NewApplicationService(s.platformInterface, servicePluginLauncher{service: s})
 	opts := coresvc.HostOptions{
-		Context:          ctx,
-		Version:          s.version,
-		BuildEnvironment: BuildEnvironment(),
-		LogMaxLines:      currentLogMaxLines(),
-		AppHandler:       s.appHandler,
-		Services:         []coresvc.ServiceRegistrar{application},
-		FileLogSink:      fileLogSink(),
-		OnStuck:          s.hostStuck,
+		Context:     ctx,
+		Version:     s.version,
+		LogMaxLines: currentLogMaxLines(),
+		AppHandler:  s.appHandler,
+		Services:    []coresvc.ServiceRegistrar{application},
+		FileLogSink: fileLogSink(),
+		OnStuck:     s.hostStuck,
 	}
 	return coresvc.NewHost(opts)
 }
@@ -121,10 +119,6 @@ func (l servicePluginLauncher) RunWithPlugins(specs []*husiv1.PluginProcessSpec,
 	workingDir := l.service.pluginWorkingDir
 	l.service.access.RUnlock()
 	return pluginpool.RunWithPlugins(workingDir, specs, nil, run)
-}
-
-func ProxyDisplayName(proxyType string) string {
-	return pluginoption.ProxyDisplayName(proxyType)
 }
 
 func apiPath(basePath string) string {

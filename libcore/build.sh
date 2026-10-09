@@ -23,13 +23,49 @@ BUILD_DESKTOP=0
 BUILD_ANDROID=0
 PLATFORM_SPECIFIED=0
 DESKTOP_TARGETS=""
-DESKTOP_OUTPUTS=()
-JNI_INCLUDE=""
 EXTERNAL_DARWIN_SDKROOT="${DARWIN_SDKROOT:-${SDKROOT:-}}"
 EXTERNAL_MACOSX_DEPLOYMENT_TARGET="${DARWIN_MACOSX_DEPLOYMENT_TARGET:-${MACOSX_DEPLOYMENT_TARGET:-}}"
 DARWIN_SDKROOT="$EXTERNAL_DARWIN_SDKROOT"
-# The Makefile exports the value it also pins the husi-core shim to.
-LINUX_GLIBC_VERSION="${LINUX_GLIBC_VERSION:-2.17}"
+ANDROID_MIN_API=24
+
+# gomobile only recognizes SDK platforms named android-<N>: an SDK that holds
+# nothing but minor releases such as android-37.2 looks empty to it. Build a
+# shadow SDK that links every entry of the real one, except that platforms/
+# holds only the newest platform at or above the minimum API, under its major
+# number. Prints the shadow SDK path.
+make_gomobile_android_home() {
+    local sdk="${ANDROID_HOME:-}"
+    local best_dir=""
+    local best_version=""
+    local platform_dir
+    local version
+    local entry
+    local shadow
+
+    for platform_dir in "$sdk"/platforms/android-*; do
+        [ -f "$platform_dir/android.jar" ] || continue
+        version="${platform_dir##*/android-}"
+        [[ "$version" =~ ^[0-9]+(\.[0-9]+)?$ ]] || continue
+        [ "${version%%.*}" -ge "$ANDROID_MIN_API" ] || continue
+        if [ -z "$best_version" ] || [ "$(printf '%s\n%s\n' "$best_version" "$version" | sort -V | tail -n 1)" == "$version" ]; then
+            best_dir="$platform_dir"
+            best_version="$version"
+        fi
+    done
+    if [ -z "$best_dir" ]; then
+        echo "No Android SDK platform with API >= $ANDROID_MIN_API under ${sdk:-\$ANDROID_HOME}/platforms" >&2
+        return 1
+    fi
+
+    shadow="$(mktemp -d)"
+    for entry in "$sdk"/*; do
+        [ "${entry##*/}" == "platforms" ] && continue
+        ln -s "$entry" "$shadow/${entry##*/}"
+    done
+    mkdir "$shadow/platforms"
+    ln -s "$best_dir" "$shadow/platforms/android-${best_version%%.*}"
+    echo "$shadow"
+}
 
 resolve_host_desktop_target() {
     local host_os
@@ -39,38 +75,20 @@ resolve_host_desktop_target() {
     echo "${host_os}/${host_arch}"
 }
 
-desktop_jar_name() {
-    local desktop_target="$1"
-    local platform="${desktop_target%%/*}"
-    local arch="${desktop_target#*/}"
-    if [ "$platform" == "$arch" ]; then
-        echo "libcore-desktop-${platform}.jar"
-        return
-    fi
-    echo "libcore-desktop-${platform}-${arch}.jar"
-}
-
-# anja -libname=husicore emits these names (see anja desktopLibraryFilename).
-desktop_native_library_name() {
-    local platform="$1"
-    case "$platform" in
-        windows)
-            echo "husicore.dll"
-            ;;
-        darwin)
-            echo "libhusicore.dylib"
-            ;;
-        *)
-            echo "libhusicore.so"
-            ;;
-    esac
-}
-
-desktop_native_build_dir() {
+desktop_build_dir() {
     local desktop_target="$1"
     local platform="${desktop_target%%/*}"
     local arch="${desktop_target#*/}"
     echo "build/${platform}_${arch}"
+}
+
+# macOS may lack the coreutils sha256sum; its shasum prints the same line.
+print_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1"
+        return
+    fi
+    shasum -a 256 "$1"
 }
 
 read_husi_version() {
@@ -163,8 +181,7 @@ apply_darwin_toolchain_env() {
         export SDKROOT="$DARWIN_SDKROOT"
         export CC="zig cc -target $zig_target"
         export CXX="zig c++ -target $zig_target"
-        # Same reason as the Linux naive toolchain: keep zig's UBSan runtime, and
-        # its 256 KiB thread-local signal stack, out of the shared library.
+        # Zig links its own UBSan runtime by default; a release binary has no use for it.
         export CGO_CFLAGS="-isysroot $SDKROOT -isystem $sdk_include_root -F$framework_root -Wno-deprecated-declarations -fno-sanitize=undefined -fno-sanitize=integer"
         export CGO_CXXFLAGS="$CGO_CFLAGS"
         export CGO_LDFLAGS="-isysroot $SDKROOT -L$SDKROOT/usr/lib -F$framework_root $dead_strip_dylibs"
@@ -201,79 +218,44 @@ apply_darwin_toolchain_env() {
     export CGO_LDFLAGS="-isysroot $SDKROOT -mmacos-version-min=$MACOSX_DEPLOYMENT_TARGET $dead_strip_dylibs"
 }
 
-apply_windows_toolchain_env() {
-    local desktop_target="$1"
-    local host_platform
-    local arch="${desktop_target#*/}"
-    local zig_target
-
-    host_platform="$(go env GOOS)"
-
-    case "$arch" in
-    arm64)
-        zig_target="aarch64-windows-gnu"
-        ;;
-    amd64)
-        zig_target="x86_64-windows-gnu"
-        ;;
-    *)
-        echo "Unsupported Windows desktop target: $desktop_target"
-        exit 1
-        ;;
-    esac
-
-    if [ "$host_platform" == "windows" ]; then
-        return
-    fi
-
-    if ! command -v zig >/dev/null 2>&1; then
-        echo "Missing zig compiler in PATH for Windows desktop target $desktop_target"
-        exit 1
-    fi
-
-    export CC="zig cc -target $zig_target"
-    export CXX="zig c++ -target $zig_target"
-    export CGO_CFLAGS="-O2 -fno-sanitize=undefined -fno-sanitize=integer"
-    export CGO_CXXFLAGS="$CGO_CFLAGS"
+# Linux and Windows load Cronet through purego, so husi-core needs no cgo there
+# and the shared library ships beside it instead: the loader looks in the
+# executable's own directory first. Apple platforms have no purego Cronet.
+cronet_uses_purego() {
+    local desktop_platform="$1"
+    local build_tags="$2"
+    [[ ",$build_tags," == *",with_naive_outbound,"* ]] || return 1
+    [ "$desktop_platform" == "linux" ] || [ "$desktop_platform" == "windows" ]
 }
 
-apply_naive_toolchain_env() {
-    local desktop_target="$1"
-    local platform="${desktop_target%%/*}"
-    local zig_target
-    local script_dir
-    if [ "$platform" == "darwin" ]; then
-        apply_darwin_toolchain_env "$desktop_target"
+cronet_library_name() {
+    local desktop_platform="$1"
+    if [ "$desktop_platform" == "windows" ]; then
+        echo "libcronet.dll"
         return
     fi
-    case "$desktop_target" in
-    linux/amd64)
-        zig_target="x86_64-linux-gnu.$LINUX_GLIBC_VERSION"
-        ;;
-    linux/arm64)
-        zig_target="aarch64-linux-gnu.$LINUX_GLIBC_VERSION"
-        ;;
-    *)
-        echo "Unsupported naive desktop target without cronet-go toolchain: $desktop_target"
-        exit 1
-        ;;
-    esac
-    if ! command -v zig >/dev/null 2>&1; then
-        echo "Missing zig compiler in PATH for naive desktop target $desktop_target"
+    echo "libcronet.so"
+}
+
+# Copies the prebuilt Cronet shared library that go.mod pins for the target
+# next to husi-core.
+install_cronet_library() {
+    local desktop_target="$1"
+    local output_dir="$2"
+    local desktop_platform="${desktop_target%%/*}"
+    local desktop_arch="${desktop_target#*/}"
+    local library_module="github.com/sagernet/cronet-go/lib/${desktop_platform}_${desktop_arch}"
+    local library_name
+    local module_dir
+    library_name="$(cronet_library_name "$desktop_platform")"
+    module_dir="$(go list -m -f '{{.Dir}}' "$library_module")"
+    if [ -z "$module_dir" ] || [ ! -f "$module_dir/$library_name" ]; then
+        echo "Missing $library_name in $library_module" >&2
         exit 1
     fi
-    export HUSI_ZIG_TARGET="$zig_target"
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
-    export CC="$script_dir/zig-cc.sh"
-    export CXX="zig c++ -target $zig_target"
-    # Zig links its own UBSan runtime by default, and that runtime keeps a 256 KiB
-    # thread-local signal stack. Go marks a c-shared library DF_STATIC_TLS, so the
-    # whole thread-local block has to fit in glibc's static TLS surplus (~1.6 KiB)
-    # when the library is dlopen'd, and the load fails with
-    # "cannot allocate memory in static TLS block".
-    export CGO_CFLAGS="-O2 -fno-sanitize=undefined -fno-sanitize=integer"
-    export CGO_CXXFLAGS="$CGO_CFLAGS"
-    export CGO_LDFLAGS="-fuse-ld=lld"
+    # The module cache is read-only; the copy must stay replaceable.
+    install -m 644 "$module_dir/$library_name" "$output_dir/$library_name"
+    echo ">> Installed $(realpath "$output_dir/$library_name")"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -293,7 +275,7 @@ while [ "$#" -gt 0 ]; do
             echo "Missing value for --desktoptargets"
             exit 1
         fi
-        # Targets apply to --desktop (JNI jar + sidecar library).
+        # Targets apply to --desktop (the husi-core binary).
         PLATFORM_SPECIFIED=1
         DESKTOP_TARGETS="$2"
         shift 2
@@ -301,18 +283,6 @@ while [ "$#" -gt 0 ]; do
     --desktoptargets=*)
         PLATFORM_SPECIFIED=1
         DESKTOP_TARGETS="${1#*=}"
-        shift
-        ;;
-    --jniinclude)
-        if [ -z "$2" ]; then
-            echo "Missing value for --jniinclude"
-            exit 1
-        fi
-        JNI_INCLUDE="$2"
-        shift 2
-        ;;
-    --jniinclude=*)
-        JNI_INCLUDE="${1#*=}"
         shift
         ;;
     --darwinsdk)
@@ -338,14 +308,16 @@ if [ "$PLATFORM_SPECIFIED" == "0" ]; then
     BUILD_ANDROID=1
 fi
 
-# --desktoptargets alone used to imply a desktop JNI jar build. Keep that when no
-# explicit product mode is selected so older invocations still work.
+# --desktoptargets alone implies a desktop build when no explicit product mode
+# is selected.
 if [ -n "$DESKTOP_TARGETS" ] && [ "$BUILD_DESKTOP" != "1" ] && [ "$BUILD_ANDROID" != "1" ]; then
     BUILD_DESKTOP=1
 fi
 
-# Just install anja & anjb if not have or version not same
-go install tool
+if [ "$BUILD_ANDROID" == "1" ]; then
+    # gomobile runs the gobind on PATH: install both at the versions go.mod pins.
+    go install tool
+fi
 
 box_version="$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)"
 if [ -z "$box_version" ]; then
@@ -356,25 +328,22 @@ husi_version="$(read_husi_version)"
 export CGO_ENABLED=1
 export GO386=softfloat
 
-# Stamp sing-box version + husi Version (used by coreentry / HusiCoreMain).
 # `badlinkname` and `tfogo_checklinkname0` pull unexported symbols, which the linker rejects
 # without -checklinkname=0: https://github.com/golang/go/issues/70508
-anja_ldflags="-X github.com/sagernet/sing-box/constant.Version=${box_version} -X libcore.Version=${husi_version} -s -w -buildid= -checklinkname=0"
+common_ldflags="-X github.com/sagernet/sing-box/constant.Version=${box_version} -s -w -buildid= -checklinkname=0"
+# husi-core reports the husi release it belongs to.
+desktop_ldflags="$common_ldflags -X main.version=${husi_version}"
 
-ANJA_COMMON_ARGS=(
+GOMOBILE_ANDROID_ARGS=(
+    bind
+    -target=android
+    -androidapi
+    "$ANDROID_MIN_API"
     -v
     -trimpath
     -buildvcs=false
     -javapkg="fr.husi"
-)
-
-ANJA_ANDROID_ARGS=(
-    bind
-    -target=android
-    -androidapi
-    23
-    "${ANJA_COMMON_ARGS[@]}"
-    -ldflags="$anja_ldflags"
+    -ldflags="$common_ldflags"
     -tags="$BUILD_TAGS"
 )
 
@@ -386,7 +355,9 @@ if [ "$BUILD_ANDROID" == "1" ]; then
         rm -f libcore-sources.jar
     fi
     # -buildvcs require: https://github.com/SagerNet/gomobile/commit/6bc27c2027e816ac1779bf80058b1a7710dad260
-    anja "${ANJA_ANDROID_ARGS[@]}" . || exit 1
+    gomobile_android_home="$(make_gomobile_android_home)" || exit 1
+    trap 'rm -rf "${gomobile_android_home:?}"' EXIT
+    ANDROID_HOME="$gomobile_android_home" gomobile "${GOMOBILE_ANDROID_ARGS[@]}" . || exit 1
 fi
 
 if [ "$BUILD_DESKTOP" == "1" ]; then
@@ -405,67 +376,38 @@ if [ "$BUILD_DESKTOP" == "1" ]; then
         fi
         desktop_platform="${desktop_target%%/*}"
         desktop_arch="${desktop_target#*/}"
-        if [ "$desktop_platform" == "windows" ] && [[ ",$local_build_tags," == *",with_naive_outbound,"* ]]; then
+        unset CC CXX SDKROOT MACOSX_DEPLOYMENT_TARGET CGO_CFLAGS CGO_CXXFLAGS CGO_LDFLAGS
+        desktop_cgo_enabled=0
+        if [ "$desktop_platform" == "darwin" ]; then
+            # Besides Cronet, sing-box reads the system certificate store and DNS
+            # configuration on Darwin only through cgo.
+            desktop_cgo_enabled=1
+            apply_darwin_toolchain_env "$desktop_target"
+        elif cronet_uses_purego "$desktop_platform" "$local_build_tags"; then
             local_build_tags="$(add_build_tag "$local_build_tags" "with_purego")"
         fi
-        desktop_output="$(desktop_jar_name "$desktop_target")"
-        if [ -f "$desktop_output" ]; then
-            rm -f "$desktop_output"
-        fi
-        unset CC CXX SDKROOT MACOSX_DEPLOYMENT_TARGET CGO_CFLAGS CGO_CXXFLAGS CGO_LDFLAGS QEMU_LD_PREFIX
+        binary_name="husi-core"
         if [ "$desktop_platform" == "windows" ]; then
-            apply_windows_toolchain_env "$desktop_target"
-        elif [[ ",$local_build_tags," == *",with_naive_outbound,"* ]]; then
-            # Cronet/naive toolchain for Linux and Darwin on the bind.
-            apply_naive_toolchain_env "$desktop_target"
+            binary_name="husi-core.exe"
         fi
-        desktop_args=("${ANJA_COMMON_ARGS[@]}" "-ldflags=$anja_ldflags" "-tags=$local_build_tags")
-        if [ -n "$JNI_INCLUDE" ]; then
-            desktop_args+=("-jniinclude=$JNI_INCLUDE")
+        output="$(desktop_build_dir "$desktop_target")/$binary_name"
+        mkdir -p "$(dirname "$output")"
+        CGO_ENABLED="$desktop_cgo_enabled" GOOS="$desktop_platform" GOARCH="$desktop_arch" go build -v -trimpath -buildvcs=false \
+            -ldflags="$desktop_ldflags" \
+            -tags="$local_build_tags" \
+            -o "$output" ./cmd/husi-core || exit 1
+        echo ">> Built $(realpath "$output")"
+        print_sha256 "$output"
+        if cronet_uses_purego "$desktop_platform" "$local_build_tags"; then
+            install_cronet_library "$desktop_target" "$(dirname "$output")"
         fi
-        # One anja invocation produces the fat jar and a bare library for
-        # packaging / session colocation (N7). -libname renames gojni → husicore.
-        # -linkonly blank-imports coreentry in the generated main so HusiCoreMain
-        # is linked without bindings and without an import cycle through
-        # daemonhost → libcore.
-        natives_staging="build/natives-out"
-        natives_subdir="${desktop_platform}-${desktop_arch}"
-        rm -rf "${natives_staging}/${natives_subdir}"
-        mkdir -p "$natives_staging"
-        anja bind -target=jvm \
-            -desktoptargets "$desktop_target" \
-            -libname=husicore \
-            -linkonly=github.com/xchacha20-poly1305/husi/libcore/v2/coreentry \
-            -nativesout "$natives_staging" \
-            "${desktop_args[@]}" \
-            -o "$desktop_output" . || exit 1
-        native_lib_name="$(desktop_native_library_name "$desktop_platform")"
-        native_src="${natives_staging}/${natives_subdir}/${native_lib_name}"
-        if [ ! -f "$native_src" ]; then
-            echo "anja did not emit desktop native library at $native_src" >&2
-            exit 1
-        fi
-        native_dst_dir="$(desktop_native_build_dir "$desktop_target")"
-        mkdir -p "$native_dst_dir"
-        cp -f "$native_src" "${native_dst_dir}/${native_lib_name}"
-        echo ">> Sidecar $(realpath "${native_dst_dir}/${native_lib_name}")"
-        sha256sum "${native_dst_dir}/${native_lib_name}"
-        DESKTOP_OUTPUTS+=("$desktop_output")
     done
 fi
 
-proj=../composeApp/libs
-mkdir -p $proj
 if [ "$BUILD_ANDROID" == "1" ]; then
+    proj=../composeApp/libs
+    mkdir -p $proj
     cp -f libcore.aar $proj
     echo ">> Installed $(realpath $proj)/libcore.aar"
-    sha256sum libcore.aar
-fi
-
-if [ "$BUILD_DESKTOP" == "1" ]; then
-    for desktop_output in "${DESKTOP_OUTPUTS[@]}"; do
-        cp -f "$desktop_output" $proj
-        echo ">> Installed $(realpath $proj)/$desktop_output"
-        sha256sum "$desktop_output"
-    done
+    print_sha256 libcore.aar
 fi

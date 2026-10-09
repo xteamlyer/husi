@@ -1,30 +1,17 @@
 package fr.husi.cli
 
 import fr.husi.CORE_SOCKET_NAME
-import fr.husi.core.BridgeCoreClient
 import fr.husi.core.CoreClient
+import fr.husi.core.KurpcCoreClient
 import fr.husi.ktx.Logs
-import fr.husi.libcore.Libcore
 import fr.husi.platform.PlatformInfo
 import fr.husi.repository.CoreHostController
 import kotlinx.coroutines.runBlocking
 import java.io.File
-
-fun libcoreLoadFailureMessage(error: LinkageError): String {
-    return buildString {
-        appendLine("Husi could not load the libcore JNI library.")
-        appendLine()
-        appendLine("This usually means the desktop libcore package does not match this system,")
-        appendLine("or developer made mistakes.")
-        appendLine()
-        appendLine("System: ${System.getProperty("os.name")} ${System.getProperty("os.arch")}")
-        appendLine("Java: ${System.getProperty("java.version")}")
-        appendLine("Error: ${error.message ?: error::class.simpleName}")
-    }.trimEnd()
-}
+import javax.net.ssl.SSLSocketFactory
 
 fun connectClient(socketBasePath: String): CoreClient? {
-    val client = BridgeCoreClient(socketBasePath)
+    val client = KurpcCoreClient.local { socketBasePath }
     runCatching {
         runBlocking { client.probe() }
     }.onFailure {
@@ -71,10 +58,11 @@ fun hostSocketPaths(sessionBasePath: String): List<String> {
 }
 
 fun connectRemoteClient(serverURL: String, secret: String): CoreClient {
-    val client = BridgeCoreClient(
-        basePath = null,
-        bridgeFactory = { Libcore.newRemoteBridgeClient(serverURL, secret) },
-    )
+    // The CLI skips the runtime bootstrap, which writes the roots of the user's certificate
+    // provider, so it trusts the platform default.
+    val client = KurpcCoreClient.remote(serverURL, secret) {
+        SSLSocketFactory.getDefault() as SSLSocketFactory
+    }
     try {
         runBlocking { client.probe() }
     } catch (e: Exception) {

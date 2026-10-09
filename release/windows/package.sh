@@ -9,6 +9,8 @@ DESKTOP_METADATA_FILE="$ROOT_DIR/release/desktop/package-metadata.sh"
 DESKTOP_JRE_MODULES_FILE="$ROOT_DIR/release/desktop/jre-modules.sh"
 NSIS_TEMPLATE_FILE="$ROOT_DIR/release/windows/desktop/installer.nsi"
 WINDOWS_JAVA_OPTS_FILE="$ROOT_DIR/release/windows/desktop/desktop-java-opts.conf"
+# husi-core loads Cronet from its own directory, so the library travels with it.
+CORE_LIBRARY_NAME="libcronet.dll"
 JAR_DIR_DEFAULT="$ROOT_DIR/composeApp/build/compose/jars"
 OUTPUT_DIR_DEFAULT="$ROOT_DIR/composeApp/build/compose/packages/windows"
 TAG_NAME=""
@@ -34,7 +36,7 @@ source "$SCRIPT_DIR/codesign.sh"
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") [--formats zip,nsis] [--target <platform/arch>] [--input-jar <file>] [--launcher-bin <file>] [--core-bin <file>] [--core-lib <file>] [--output-dir <dir>] [--jbr-jmods <dir>] [--no-sign]
+  $(basename "$0") [--formats zip,nsis] [--target <platform/arch>] [--input-jar <file>] [--launcher-bin <file>] [--core-bin <file>] [--output-dir <dir>] [--jbr-jmods <dir>] [--no-sign]
   $(basename "$0") --check-tools [--formats zip,nsis] [--target <platform/arch>] [--jbr-jmods <dir>] [--no-sign]
 
 Description:
@@ -44,14 +46,14 @@ Description:
   run also writes a second pair whose names carry a -jbr suffix and which
   bundle a Java runtime linked with jlink from the JetBrains Runtime modules
   of the target. Those need no system Java. Both pairs share the same signed
-  launcher, shim and core library.
+  launcher, husi-core and $CORE_LIBRARY_NAME.
 
 Defaults:
   --formats      zip,nsis
   --input-jar    newest matching jar under $JAR_DIR_DEFAULT
   --launcher-bin $ROOT_DIR/launcher/zig-out/bin/launcher-windows-<x86_64|aarch64>.exe
   --core-bin     $ROOT_DIR/libcore/build/windows_<amd64|arm64>/husi-core.exe
-  --core-lib     $ROOT_DIR/libcore/build/windows_<amd64|arm64>/husicore.dll
+                 ($CORE_LIBRARY_NAME is taken from the same directory)
   --output-dir   $OUTPUT_DIR_DEFAULT
   --jbr-jmods    unset (env: JBR_JMODS); fetch them with ./run lib jbr windows/<arch>
 
@@ -490,28 +492,15 @@ resolve_core_bin() {
     exit 1
 }
 
-resolve_core_lib() {
-    local requested="$1"
-    local default_path="$ROOT_DIR/libcore/build/${TARGET_PLATFORM}_${TARGET_ARCH}/husicore.dll"
-
-    if [[ -n "$requested" ]]; then
-        if [[ ! -f "$requested" ]]; then
-            error "Core native library not found: $requested"
-            exit 1
-        fi
-        INPUT_CORE_LIB="$requested"
-        return
+resolve_core_library() {
+    INPUT_CORE_LIBRARY="$(dirname "$INPUT_CORE_BIN")/$CORE_LIBRARY_NAME"
+    if [[ ! -f "$INPUT_CORE_LIBRARY" ]]; then
+        error "$CORE_LIBRARY_NAME not found beside the core host binary: $INPUT_CORE_LIBRARY"
+        error "make core_desktop puts it there."
+        exit 1
     fi
-
-    if [[ -f "$default_path" ]]; then
-        INPUT_CORE_LIB="$default_path"
-        return
-    fi
-
-    error "Core native library not found: $default_path"
-    error "Build one first: make libcore_desktop DESKTOP_TARGETS=${TARGET_PLATFORM}/${TARGET_ARCH}"
-    exit 1
 }
+
 
 nsis_url_scheme_install_entries() {
     local scheme
@@ -580,7 +569,6 @@ prepare_rootfs() {
     local launcher_name="$APP_NAME.exe"
     local launcher_path="$root/$launcher_name"
     local core_path="$root/husi-core.exe"
-    local core_lib_path="$root/husicore.dll"
 
     mkdir -p "$root/app"
     cp "$INPUT_JAR" "$root/app/$PACKAGE_NAME.jar"
@@ -588,9 +576,8 @@ prepare_rootfs() {
     chmod 755 "$launcher_path"
     cp "$INPUT_CORE_BIN" "$core_path"
     chmod 755 "$core_path"
-    # Sidecar anja library next to husi-core (N7); UI sets anja.natives.dir to this dir.
-    cp "$INPUT_CORE_LIB" "$core_lib_path"
-    chmod 755 "$core_lib_path"
+    cp "$INPUT_CORE_LIBRARY" "$root/$CORE_LIBRARY_NAME"
+    chmod 644 "$root/$CORE_LIBRARY_NAME"
     cp "$WINDOWS_JAVA_OPTS_FILE" "$root/desktop-java-opts.conf.template"
     cp "$ROOT_DIR/release/linux/desktop/desktop-app-args.conf" "$root/desktop-app-args.conf.template"
     cp "$ROOT_DIR/LICENSE" "$root/LICENSE"
@@ -669,7 +656,8 @@ build_nsis() {
         "__HUSI_LICENSE_FILE__" "$ROOT_DIR/LICENSE" \
         "__HUSI_LAUNCHER_FILE__" "$INPUT_LAUNCHER_BIN" \
         "__HUSI_CORE_FILE__" "$INPUT_CORE_BIN" \
-        "__HUSI_CORE_LIB_FILE__" "$INPUT_CORE_LIB" \
+        "__HUSI_CORE_LIBRARY_NAME__" "$CORE_LIBRARY_NAME" \
+        "__HUSI_CORE_LIBRARY_FILE__" "$INPUT_CORE_LIBRARY" \
         "__HUSI_JAR_FILE__" "$INPUT_JAR" \
         "__HUSI_JAVA_OPTS_FILE__" "$WINDOWS_JAVA_OPTS_FILE" \
         "__HUSI_APP_ARGS_FILE__" "$ROOT_DIR/release/linux/desktop/desktop-app-args.conf" \
@@ -710,7 +698,7 @@ TARGET_ARCH=""
 INPUT_JAR=""
 INPUT_LAUNCHER_BIN=""
 INPUT_CORE_BIN=""
-INPUT_CORE_LIB=""
+INPUT_CORE_LIBRARY=""
 OUTPUT_DIR="$OUTPUT_DIR_DEFAULT"
 FORMATS="zip,nsis"
 CHECK_TOOLS=0
@@ -748,11 +736,6 @@ while [[ $# -gt 0 ]]; do
         --core-bin)
             require_arg "$1" "${2:-}"
             INPUT_CORE_BIN="$2"
-            shift 2
-            ;;
-        --core-lib)
-            require_arg "$1" "${2:-}"
-            INPUT_CORE_LIB="$2"
             shift 2
             ;;
         -o|--output-dir)
@@ -806,7 +789,7 @@ resolve_tag_epoch
 resolve_input_jar "$INPUT_JAR"
 resolve_launcher_bin "$INPUT_LAUNCHER_BIN"
 resolve_core_bin "$INPUT_CORE_BIN"
-resolve_core_lib "$INPUT_CORE_LIB"
+resolve_core_library
 mkdir -p "$OUTPUT_DIR"
 
 work_dir="$(mktemp -d)"

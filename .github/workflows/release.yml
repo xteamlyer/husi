@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   android:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout source code
         uses: actions/checkout@v7
@@ -27,6 +27,7 @@ jobs:
           fetch-depth: 0
           submodules: recursive
       - uses: ./.github/actions/load-build-versions
+      - uses: ./.github/actions/setup-ndk
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -46,7 +47,7 @@ jobs:
         with:
           path: composeApp/src/commonMain/composeResources/files/sing-box
           key: >-
-            assets-v2-${{ env.GEOIP_VERSION }}-${{ env.GEOSITE_VERSION }}-${{ hashFiles('buildScript/lib/assets.sh', 'libcore/cmd/ruleset_generate/**', 'libcore/cmd/internal/shared/**', 'libcore/go.mod', 'libcore/go.sum') }}
+            assets-v2-${{ env.GEOIP_VERSION }}-${{ env.GEOSITE_VERSION }}-${{ hashFiles('buildScript/lib/assets.sh', 'libcore/cmd/internal/ruleset_generate/**', 'libcore/go.mod', 'libcore/go.sum') }}
       - name: Prepare assets
         if: steps.cache-assets.outputs.cache-hit != 'true'
         run: make assets
@@ -79,31 +80,38 @@ jobs:
     # One cell per GOOS/GOARCH so ProGuard, jlink and libcore bind run in
     # parallel instead of stacking into a single ~50 minute job. Windows thin
     # and -jbr packages share one cell (same uberjar, one package.sh run).
-    runs-on: ubuntu-26.04
+    # darwin builds on macOS, where husi-core's cgo uses Xcode's toolchain and SDK.
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - id: linux-amd64
+            runner: ubuntu-latest
             target: linux/amd64
             package: linux
             formats: "deb,rpm,pacman,tarball,appimage"
             appimage_runtime: x86_64
             apt_packages: zstd
           - id: linux-arm64
+            runner: ubuntu-latest
             target: linux/arm64
             package: linux
             formats: "deb,rpm,pacman,tarball,appimage"
             appimage_runtime: aarch64
             apt_packages: zstd binutils-aarch64-linux-gnu
+          # windows/arm64 is temporarily out: androidx sqlite-bundled ships no windows_arm64
+          # libsqliteJni, so the app cannot open its database there.
+          # See https://issuetracker.google.com/issues/426464784
           - id: windows-amd64
+            runner: ubuntu-latest
             target: windows/amd64
             package: windows
             apt_packages: nsis osslsigncode
           - id: darwin-arm64
+            runner: macos-26
             target: darwin/arm64
             package: macos
-            apt_packages: xorriso
     steps:
       - name: Checkout source code
         uses: actions/checkout@v7
@@ -127,23 +135,9 @@ jobs:
       - uses: ./.github/actions/setup-zig
         with:
           cache-name: desktop-${{ matrix.id }}
-          cache-hash: ${{ hashFiles('launcher/**', 'libcore/shim/**') }}
-      - name: Checkout JNI headers
-        uses: actions/checkout@v7
-        with:
-          repository: Casterlabs/jni-headers
-          ref: ${{ env.JNI_HEADERS_COMMIT }}
-          path: jni-headers
-          sparse-checkout: versions/${{ env.JNI_HEADERS_VERSION }}
-      - name: Checkout macOS SDK
-        if: ${{ matrix.package == 'macos' }}
-        uses: actions/checkout@v7
-        with:
-          repository: alexey-lysiuk/macos-sdk
-          ref: ${{ env.MACOS_SDK_COMMIT }}
-          path: macos-sdk
-          sparse-checkout: MacOSX${{ env.MACOS_SDK_VERSION }}.sdk
+          cache-hash: ${{ hashFiles('launcher/**') }}
       - name: Install system packaging tools
+        if: ${{ runner.os == 'Linux' }}
         # linux-arm64: binutils-aarch64-linux-gnu so jlink can strip the
         # AppImage runtime's native libraries with that architecture's objcopy.
         run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt_packages }}
@@ -220,20 +214,10 @@ jobs:
         with:
           path: composeApp/src/commonMain/composeResources/files/sing-box
           key: >-
-            assets-v2-${{ env.GEOIP_VERSION }}-${{ env.GEOSITE_VERSION }}-${{ hashFiles('buildScript/lib/assets.sh', 'libcore/cmd/ruleset_generate/**', 'libcore/cmd/internal/shared/**', 'libcore/go.mod', 'libcore/go.sum') }}
+            assets-v2-${{ env.GEOIP_VERSION }}-${{ env.GEOSITE_VERSION }}-${{ hashFiles('buildScript/lib/assets.sh', 'libcore/cmd/internal/ruleset_generate/**', 'libcore/go.mod', 'libcore/go.sum') }}
       - name: Prepare assets
         if: steps.cache-assets.outputs.cache-hit != 'true'
         run: make assets
-      - name: Build desktop libcore
-        # windows/arm64 is temporarily out: androidx sqlite-bundled ships no windows_arm64
-        # libsqliteJni, so the app cannot open its database there.
-        # See https://issuetracker.google.com/issues/426464784
-        run: |
-          if [ "${{ matrix.package }}" = "macos" ]; then
-            make libcore_desktop DESKTOP_TARGETS="${{ matrix.target }}" JNI_INCLUDE="$JNI_INCLUDE" DARWIN_SDK="$MACOS_SDK_PATH"
-          else
-            make libcore_desktop DESKTOP_TARGETS="${{ matrix.target }}" JNI_INCLUDE="$JNI_INCLUDE"
-          fi
       - name: Download Go modules
         run: cd libcore && go mod download
       - name: Generate about libraries metadata
@@ -290,7 +274,7 @@ jobs:
   publish:
     needs: [android, desktop]
     if: ${{ !inputs.no-publish }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     steps:
       - name: Download Android artifacts
         uses: actions/download-artifact@v8

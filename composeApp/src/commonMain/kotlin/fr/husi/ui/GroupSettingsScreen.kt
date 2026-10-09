@@ -47,18 +47,14 @@ import fr.husi.compose.SwitchPreference
 import fr.husi.compose.TextButton
 import fr.husi.compose.TextFieldPreference
 import fr.husi.compose.UIntegerTextField
-import fr.husi.compose.ValidatedTextField
 import fr.husi.compose.fadingEdge
 import fr.husi.compose.material3.Icon
 import fr.husi.compose.material3.Text
 import fr.husi.compose.preferenceGroup
 import fr.husi.compose.withNavigation
-import fr.husi.ktx.USER_AGENT
 import fr.husi.ktx.blankAsNull
 import fr.husi.ktx.contentOrUnset
 import fr.husi.ktx.intListN
-import fr.husi.ktx.readableMessage
-import fr.husi.libcore.Libcore
 import fr.husi.resources.Res
 import fr.husi.resources.age_identity
 import fr.husi.resources.apply
@@ -449,9 +445,6 @@ private fun LazyListScope.groupSettings(
                     },
                     summary = { Text(contentOrUnset(uiState.subscriptionAgeIdentity)) },
                     valueToText = { it },
-                    textField = { value, onValueChange, onOk ->
-                        ValidatedAgeIdentityTextField(value, onValueChange, onOk)
-                    },
                 )
             }
         }
@@ -502,7 +495,8 @@ private fun LazyListScope.groupSettings(
                     )
                 },
                 summary = {
-                    val text = uiState.subscriptionUserAgent.blankAsNull() ?: USER_AGENT
+                    val defaultUserAgent by viewModel.defaultUserAgent.collectAsStateWithLifecycle()
+                    val text = uiState.subscriptionUserAgent.blankAsNull() ?: defaultUserAgent
                     Text(text)
                 },
                 valueToText = { it },
@@ -543,29 +537,6 @@ private fun LazyListScope.groupSettings(
                     UIntegerTextField(value, onValueChange, onOk)
                 },
             )
-        }
-    }
-}
-
-@Composable
-fun ValidatedAgeIdentityTextField(
-    value: TextFieldValue,
-    onValueChange: (TextFieldValue) -> Unit,
-    onOk: () -> Unit,
-) {
-    ValidatedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        onOk = onOk,
-        singleLine = true,
-    ) { text ->
-        if (text.isBlank()) {
-            null
-        } else try {
-            Libcore.validateAgeIdentities(text)
-            null
-        } catch (e: Exception) {
-            e.readableMessage
         }
     }
 }

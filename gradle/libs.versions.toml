@@ -1,11 +1,12 @@
 [versions]
 ksp = "2.3.12"
-kotlinComposePlugin = "2.4.20"
+kotlinComposePlugin = "2.4.21"
 clikt = "5.1.0"
 composeMultiplatform = "1.12.1"
 composeMaterial3 = "1.12.0-alpha03"
 koin = "4.2.2"
 kotlinCoroutines = "1.11.0"
+kurpc = "0.1.0"
 kotlinxSerialization = "1.11.0"
 kotlinxDatetime = "0.8.0"
 kotlinxImmutable = "0.5.2"
@@ -21,6 +22,7 @@ composePreference = "2.2.0"
 fastScroller = "0.3.2"
 androidxCamera = "1.6.2"
 zxing = "3.5.4"
+kpuri = "0.1.0"
 androidxRoom = "2.8.5"
 androidxSqlite = "2.7.1"
 smaliDexlib2 = "3.0.10"
@@ -39,17 +41,22 @@ aboutlibraries = "15.2.0"
 buildkonfig = "0.23.0"
 androidxTv = "1.1.0"
 nucleus = "2.5.18"
-composeNativeTray = "2.1.6"
+composeNativeTray = "2.1.7"
 agp = "9.4.1"
-kotlinGradlePlugin = "2.4.20"
-haze = "2.0.0"
+desugarJdkLibs = "2.1.5"
+kotlinGradlePlugin = "2.4.21"
+haze = "2.0.1"
 
 [libraries]
+kurpc = { module = "io.github.xchacha20-poly1305:kurpc", version.ref = "kurpc" }
+# One jar per desktop classifier; composeApp picks the one matching desktopTarget.
+kurpc-natives-jvm = { module = "io.github.xchacha20-poly1305:kurpc-natives-jvm", version.ref = "kurpc" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinCoroutines" }
 kotlinx-coroutines-swing = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-swing", version.ref = "kotlinCoroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinCoroutines" }
 kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinxImmutable" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-serialization-protobuf = { module = "org.jetbrains.kotlinx:kotlinx-serialization-protobuf", version.ref = "kotlinxSerialization" }
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 clikt = { module = "com.github.ajalt.clikt:clikt", version.ref = "clikt" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
@@ -73,6 +80,7 @@ androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", versi
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "androidxCamera" }
 androidx-camera-compose = { module = "androidx.camera:camera-compose", version.ref = "androidxCamera" }
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+kpuri = { module = "io.github.xchacha20-poly1305:kpuri", version.ref = "kpuri" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "androidxRoom" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "androidxRoom" }
 androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "androidxSqlite" }
@@ -93,6 +101,7 @@ junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine" }
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 aboutlibraries-compose-m3 = { module = "com.mikepenz:aboutlibraries-compose-m3", version.ref = "aboutlibraries" }
 agp-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+android-desugar-jdk-libs = { module = "com.android.tools:desugar_jdk_libs", version.ref = "desugarJdkLibs" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlinGradlePlugin" }
 jetbrains-compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
 jetbrains-compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "composeMultiplatform" }

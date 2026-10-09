@@ -4,19 +4,17 @@ import (
 	"bytes"
 	"context"
 	"reflect"
-	"time"
-	_ "unsafe"
 
 	"github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/schema"
-	"github.com/sagernet/sing/common/byteformats"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
 
 	"github.com/xchacha20-poly1305/husi/libcore/v2/distro"
+	"github.com/xchacha20-poly1305/husi/libcore/v2/pb/husi/v1"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/plugin/protect"
 )
 
@@ -67,8 +65,8 @@ func (c *commentedDocument) SetComments(comments *json.CommentSet) {
 	c.comments = comments
 }
 
-// FormatConfig formats json, keeping the comments of configContent.
-func FormatConfig(configContent string) (string, error) {
+// formatConfig formats json, keeping the comments of configContent.
+func formatConfig(configContent string) (string, error) {
 	ctx := baseContext(nil)
 	document, err := json.UnmarshalExtendedContext[commentedDocument](ctx, []byte(configContent))
 	if err != nil {
@@ -87,8 +85,19 @@ func FormatConfig(configContent string) (string, error) {
 	return buffer.String(), nil
 }
 
-func generateSchema[T any]() (string, error) {
-	rootType := reflect.TypeFor[T]()
+// generateSchema generates the JSON Schema of the option type kind names.
+func generateSchema(kind husiv1.SchemaKind) (string, error) {
+	var rootType reflect.Type
+	switch kind {
+	case husiv1.SchemaKind_SCHEMA_KIND_CONFIG:
+		rootType = reflect.TypeFor[option.Options]()
+	case husiv1.SchemaKind_SCHEMA_KIND_OUTBOUND:
+		rootType = reflect.TypeFor[option.Outbound]()
+	case husiv1.SchemaKind_SCHEMA_KIND_DNS_RULE:
+		rootType = reflect.TypeFor[option.DNSRule]()
+	default:
+		return "", E.New("unknown schema kind: ", kind.String())
+	}
 	content, err := schema.Generate(baseContext(nil), rootType)
 	if err != nil {
 		return "", E.Cause(err, "generate schema for ", rootType)
@@ -96,23 +105,8 @@ func generateSchema[T any]() (string, error) {
 	return string(content), nil
 }
 
-// GenerateConfigSchema generates the JSON Schema for the supported configuration options.
-func GenerateConfigSchema() (string, error) {
-	return generateSchema[option.Options]()
-}
-
-// GenerateOutboundSchema generates the JSON Schema for a supported outbound.
-func GenerateOutboundSchema() (string, error) {
-	return generateSchema[option.Outbound]()
-}
-
-// GenerateDNSRuleSchema generates the JSON Schema for a DNS rule.
-func GenerateDNSRuleSchema() (string, error) {
-	return generateSchema[option.DNSRule]()
-}
-
-// CheckConfig checks whether configContent can run as sing-box configuration.
-func CheckConfig(configContent string) error {
+// checkConfig checks whether configContent can run as sing-box configuration.
+func checkConfig(configContent string) error {
 	ctx := baseContext(nil)
 	options, err := parseConfig(ctx, configContent)
 	if err != nil {
@@ -140,21 +134,4 @@ func CheckConfig(configContent string) error {
 	}
 	defer instance.Close()
 	return nil
-}
-
-// ParseDuration parses Go style duration.
-func ParseDuration(raw string) (int64, error) {
-	duration, err := parseMyDuration(raw)
-	return int64(duration), err
-}
-
-//go:linkname parseMyDuration github.com/sagernet/sing/common/json/badoption/internal/my_time.ParseDuration
-func parseMyDuration(raw string) (time.Duration, error)
-
-func FormatBytes(length int64) string {
-	return byteformats.FormatKBytes(uint64(length))
-}
-
-func FormatMemoryBytes(length int64) string {
-	return byteformats.FormatMemoryKBytes(uint64(length))
 }

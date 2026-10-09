@@ -25,6 +25,17 @@ option java_package = "fr.husi.proto.v1";
 // they share the host's protocol registry, socks path and cancellation model —
 // same placement as StandaloneURLTest (D6).
 //
+// HTTPFetch is the desktop half of the HTTP client husi uses for its own
+// downloads (subscriptions, rule sets, app updates); Android calls the same Go
+// code in-process through the libcore binding. It runs here so the desktop UI
+// needs no Go runtime of its own.
+//
+// Ping, MatchRuleSets and GetRootCertificates answer for the UI what it cannot
+// compute without Go: an ICMP socket (and on Android, a socket protected from
+// the VPN), sing-box's rule-set matcher, and the root bundles embedded in
+// sing-box. Rule sets are named by directory: the core already reads the same
+// directories for the rule sets of a running service.
+//
 // The standalone STUN and network quality tests are the no-running-service half
 // of sing-box's pair: with a service started the UI calls
 // daemon.StartedService, which routes through a chosen outbound; with none it
@@ -32,11 +43,18 @@ option java_package = "fr.husi.proto.v1";
 // sing-box's own, so the two halves differ only in where the dialer comes from.
 service ApplicationService {
   rpc CheckConfig(CheckConfigRequest) returns (CheckConfigResponse);
+  rpc FormatConfig(FormatConfigRequest) returns (FormatConfigResponse);
   rpc GenerateSchema(GenerateSchemaRequest) returns (GenerateSchemaResponse);
   rpc StandaloneURLTest(StandaloneURLTestRequest) returns (StandaloneURLTestResponse);
   rpc GetCert(GetCertRequest) returns (GetCertResponse);
   rpc StandaloneSTUNTest(StandaloneSTUNTestRequest) returns (stream daemon.STUNTestProgress);
   rpc StandaloneNetworkQualityTest(StandaloneNetworkQualityTestRequest) returns (stream daemon.NetworkQualityTestProgress);
+  rpc HTTPFetch(HTTPFetchRequest) returns (stream HTTPFetchResponse);
+  rpc Ping(PingRequest) returns (PingResponse);
+  rpc MatchRuleSets(MatchRuleSetsRequest) returns (MatchRuleSetsResponse);
+  rpc GetRootCertificates(GetRootCertificatesRequest) returns (GetRootCertificatesResponse);
+  // Android only; other platforms answer UNIMPLEMENTED.
+  rpc ReadAndroidVPNType(ReadAndroidVPNTypeRequest) returns (ReadAndroidVPNTypeResponse);
 }
 
 message CheckConfigRequest {
@@ -46,6 +64,17 @@ message CheckConfigRequest {
 // An unusable config is reported as an INVALID_ARGUMENT error carrying the
 // parser message, so a successful response has nothing left to say.
 message CheckConfigResponse {}
+
+message FormatConfigRequest {
+  string config = 1;
+}
+
+// Malformed JSON is reported as an INVALID_ARGUMENT error carrying the parser
+// message.
+message FormatConfigResponse {
+  // config re-indented in sing-box style, comments preserved.
+  string config = 1;
+}
 
 enum SchemaKind {
   SCHEMA_KIND_UNSPECIFIED = 0;
@@ -119,4 +148,106 @@ message StandaloneNetworkQualityTestRequest {
   bool serial = 2;
   int32 max_runtime_seconds = 3;
   bool http3 = 4;
+}
+
+// Socks inbound on the host's loopback that HTTPFetch dials through.
+message HTTPFetchSocks5 {
+  int32 port = 1;
+  string username = 2;
+  string password = 3;
+}
+
+// One GET. A status other than 200 fails the call with the start of the body
+// in the error message.
+message HTTPFetchRequest {
+  string url = 1;
+  map<string, string> headers = 2;
+  // Leaves the exchange without an overall deadline, for large downloads on
+  // slow links. Connection setup still times out, and a body that stops making
+  // progress still fails.
+  bool no_overall_deadline = 3;
+  // Forces TLS 1.3.
+  bool restricted_tls = 4;
+  // Hex SHA-256 of a leaf certificate accepted even when it does not chain to
+  // a trusted root (OOCv1).
+  string pinned_sha256 = 5;
+  // Unset dials the server directly.
+  HTTPFetchSocks5 socks5 = 6;
+  // age identities that decrypt an armored response body.
+  string age_identities = 7;
+}
+
+message HTTPFetchHead {
+  // First value of each response header, keyed by canonical header name.
+  map<string, string> headers = 1;
+  // Length of the body that follows, or -1 when unknown.
+  int64 content_length = 2;
+}
+
+// The stream carries one head, then the body in chunks.
+message HTTPFetchResponse {
+  oneof payload {
+    HTTPFetchHead head = 1;
+    bytes chunk = 2;
+  }
+}
+
+enum PingProtocol {
+  PING_PROTOCOL_UNSPECIFIED = 0;
+  PING_PROTOCOL_ICMP = 1;
+  PING_PROTOCOL_TCP = 2;
+}
+
+message PingRequest {
+  PingProtocol protocol = 1;
+  // IP address or domain name.
+  string address = 2;
+  // Ignored by ICMP.
+  uint32 port = 3;
+  int32 timeout_ms = 4;
+}
+
+message PingResponse {
+  int32 latency_ms = 1;
+}
+
+message MatchRuleSetsRequest {
+  // Domain name or IP address to match.
+  string keyword = 1;
+  // Directory searched recursively for binary (.srs) rule sets.
+  string directory = 2;
+}
+
+message MatchRuleSetsResponse {
+  // File names of the rule sets that have a rule matching the keyword.
+  // Unreadable files are skipped, and a missing directory reports nothing.
+  repeated string names = 1;
+}
+
+message GetRootCertificatesRequest {
+  RootCertificateStore store = 1;
+}
+
+message GetRootCertificatesResponse {
+  // The roots of the store as PEM, falling back to Mozilla's bundle when the
+  // store cannot be read.
+  string pem = 1;
+}
+
+message ReadAndroidVPNTypeRequest {
+  // The base and split APKs of one package, tried in order.
+  repeated string apk_paths = 1;
+}
+
+// The Go core another VPN app embeds, read from the Go build info of its
+// native libraries.
+message AndroidVPNType {
+  string core_type = 1;
+  string core_path = 2;
+  string go_version = 3;
+}
+
+message ReadAndroidVPNTypeResponse {
+  // Unset when no APK has a native library that reveals its core.
+  AndroidVPNType type = 1;
 }

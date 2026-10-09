@@ -19,24 +19,24 @@
 
 package fr.husi.group
 
-import fr.husi.database.DataStore
 import fr.husi.database.ProxyGroup
 import fr.husi.database.SubscriptionBean
 import fr.husi.fmt.AbstractBean
 import fr.husi.fmt.shadowsocks.ShadowsocksBean
 import fr.husi.fmt.shadowsocks.pluginToLocal
 import fr.husi.ktx.Logs
-import fr.husi.ktx.addPathSegments
 import fr.husi.ktx.applyDefaultValues
 import fr.husi.ktx.blankAsNull
-import fr.husi.ktx.generateUserAgent
 import fr.husi.ktx.kxs
-import fr.husi.libcore.URL
-import fr.husi.libcore.resolveHttpClientFactory
+import fr.husi.net.HttpFetchRequest
+import fr.husi.net.buildUserAgent
+import fr.husi.net.localSocks5Proxy
+import fr.husi.net.resolveHttpFetcher
 import fr.husi.repository.resolveRepository
 import fr.husi.resources.Res
 import fr.husi.resources.ooc_missing_protocol
 import fr.husi.resources.ooc_subscription_token_invalid
+import io.github.xchacha20_poly1305.kpuri.Url
 import kotlinx.serialization.Serializable
 
 /** https://github.com/Shadowsocks-NET/OpenOnlineConfig */
@@ -83,9 +83,8 @@ object OpenOnlineConfigUpdater : GroupUpdater() {
     ): GroupUpdateResult.Success {
         val repository = resolveRepository()
         val token: OOCSubscriptionToken
-        val baseLink: URL
+        val baseLink: Url
         val certSha256: String?
-        val httpClientFactory = resolveHttpClientFactory()
         try {
             token = kxs.decodeFromString(subscription.token)
             val version = token.version
@@ -105,42 +104,35 @@ object OpenOnlineConfigUpdater : GroupUpdater() {
                 !baseUrl.startsWith("https://") -> {
                     error("Protocol scheme must be https")
                 }
-
-                else -> baseLink = httpClientFactory.parseURL(baseUrl)
             }
             val secret = token.secret
             if (secret.isBlank()) error("Missing field: secret")
-            baseLink.addPathSegments(secret, "ooc/v1")
 
             val userId = token.userId
             if (userId.isBlank()) error("Missing field: userId")
-            baseLink.addPathSegments(userId)
+            baseLink = Url.parse(baseUrl).newBuilder()
+                .addPathSegment(secret)
+                .addPathSegments("ooc/v1")
+                .addPathSegment(userId)
+                .build()
             certSha256 = token.certSha256?.blankAsNull()
         } catch (e: Exception) {
             Logs.e("OOC token check failed, token = ${subscription.token}", e)
             error(repository.getString(Res.string.ooc_subscription_token_invalid))
         }
 
-        val response = httpClientFactory.newHttpClient().apply {
-            if (DataStore.serviceState.connected) {
-                useSocks5(
-                    DataStore.mixedPort.get(),
-                    DataStore.inboundUsername.get(),
-                    DataStore.inboundPassword.get(),
-                )
-            }
+        val request = HttpFetchRequest(
+            url = baseLink.toString(),
+            userAgent = buildUserAgent(subscription.customUserAgent),
             // Strict !!!
-            restrictedTLS()
-            certSha256?.let {
-                pinnedSHA256(it)
-            }
-        }.newRequest().apply {
-            setURL(baseLink.string)
-            setUserAgent(generateUserAgent(subscription.customUserAgent))
-        }.execute()
+            restrictedTls = true,
+            pinnedSha256 = certSha256,
+            socks5 = localSocks5Proxy(),
+        )
+        val response = resolveHttpFetcher().fetchText(request)
 
         val oocResponse: OOCResponse = try {
-            kxs.decodeFromString(response.contentString)
+            kxs.decodeFromString(response.content)
         } catch (e: Exception) {
             Logs.e("OOC response parse failed", e)
             error(repository.getString(Res.string.ooc_subscription_token_invalid))

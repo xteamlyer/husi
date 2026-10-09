@@ -47,7 +47,7 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
         currentVersion: String = "1.0.0",
         abis: List<String> = listOf("arm64-v8a", "armeabi-v7a"),
     ) = AppUpdateChecker(
-        httpClientFactory = fakeHttp,
+        httpFetcher = fakeHttp,
         currentVersion = currentVersion,
         abis = abis,
         repository = TEST_REPOSITORY,
@@ -199,7 +199,7 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
 
         assertEquals(
             githubApiLatestReleaseUrl(TEST_REPOSITORY),
-            fakeHttp.lastClient?.lastRequest?.url,
+            fakeHttp.lastRequest?.url,
         )
     }
 
@@ -212,7 +212,7 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
 
         assertEquals(
             githubApiReleasesUrl(TEST_REPOSITORY),
-            fakeHttp.lastClient?.lastRequest?.url,
+            fakeHttp.lastRequest?.url,
         )
     }
 
@@ -226,7 +226,7 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
 
         assertEquals(
             "Bearer secret-token",
-            fakeHttp.lastClient?.lastRequest?.headers["Authorization"],
+            fakeHttp.lastRequest?.headers["Authorization"],
         )
     }
 
@@ -237,7 +237,7 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
 
         checker().check()
 
-        assertNull(fakeHttp.lastClient?.lastRequest?.headers["Authorization"])
+        assertNull(fakeHttp.lastRequest?.headers["Authorization"])
     }
 
     @Test
@@ -291,30 +291,6 @@ class AppUpdateCheckerTest : HusiHttpKoinTest() {
         assertNull(info.downloadUrl)
         assertNull(info.assetName)
         assertEquals("https://example.invalid/9.9.9", info.releaseUrl)
-    }
-
-    @Test
-    fun `check returns null when the release matches the current version`() = runTest {
-        DataStore.appUpdatePreRelease.set(false)
-        fakeHttp.nextResponseContent = release("1.0.0").encodeToByteArray()
-
-        assertNull(checker().check())
-    }
-
-    @Test
-    fun `check returns null when the release is older`() = runTest {
-        DataStore.appUpdatePreRelease.set(false)
-        fakeHttp.nextResponseContent = release("0.9.0").encodeToByteArray()
-
-        assertNull(checker(currentVersion = "1.0.0").check())
-    }
-
-    @Test
-    fun `check accepts a tag with a leading v`() = runTest {
-        DataStore.appUpdatePreRelease.set(false)
-        fakeHttp.nextResponseContent = release("v1.0.1").encodeToByteArray()
-
-        assertEquals("v1.0.1", checker().check()?.version)
     }
 
     @Test

@@ -25,10 +25,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import fr.husi.ktx.parseGoDuration
 import fr.husi.ktx.readableMessage
-import fr.husi.libcore.Libcore
 import fr.husi.repository.resolveRepository
 import fr.husi.resources.*
+import io.github.xchacha20_poly1305.kpuri.Url
 
 @Composable
 fun ValidatedTextField(
@@ -90,8 +91,8 @@ fun LinkOrContentTextField(
 
         val errors = linkedSetOf<String>()
         for (link in lines) try {
-            val url = Libcore.parseURL(link)
-            when (url.scheme.lowercase()) {
+            val url = Url.parse(link)
+            when (url.scheme) {
                 "content" -> continue
                 "http" -> errors.add(resolveRepository().getString(Res.string.cleartext_http_warning))
             }
@@ -124,7 +125,7 @@ fun DurationTextField(
         }
 
         return try {
-            Libcore.parseDuration(text)
+            parseGoDuration(text)
             null
         } catch (e: Exception) {
             e.readableMessage

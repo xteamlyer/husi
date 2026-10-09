@@ -32,10 +32,9 @@ func startLibcoreHost(t *testing.T) (*coresvc.Host, string) {
 		distro.CertificateProviderRegistry(),
 	)
 	host, err := coresvc.NewHost(coresvc.HostOptions{
-		Context:          ctx,
-		Version:          "check-test",
-		BuildEnvironment: BuildEnvironment(),
-		LogMaxLines:      50,
+		Context:     ctx,
+		Version:     "check-test",
+		LogMaxLines: 50,
 		Services: []coresvc.ServiceRegistrar{
 			NewApplicationService(nil, nil),
 		},
@@ -56,7 +55,8 @@ func startLibcoreHost(t *testing.T) (*coresvc.Host, string) {
 	return host, socketPath
 }
 
-func TestRealCheckConfigInvalidViaRPC(t *testing.T) {
+func dialApplicationService(t *testing.T) husiv1.ApplicationServiceClient {
+	t.Helper()
 	_, socketPath := startLibcoreHost(t)
 	conn, err := grpc.NewClient(
 		"unix:"+socketPath,
@@ -68,12 +68,15 @@ func TestRealCheckConfigInvalidViaRPC(t *testing.T) {
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
+	return husiv1.NewApplicationServiceClient(conn)
+}
 
-	client := husiv1.NewApplicationServiceClient(conn)
+func TestRealCheckConfigInvalidViaRPC(t *testing.T) {
+	client := dialApplicationService(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
-	_, err = client.CheckConfig(ctx, &husiv1.CheckConfigRequest{Config: "not-json"})
+	_, err := client.CheckConfig(ctx, &husiv1.CheckConfigRequest{Config: "not-json"})
 	require.Error(t, err, "expected InvalidArgument for invalid config")
 	st, ok := status.FromError(err)
 	require.True(t, ok, "expected grpc status, got %v", err)
@@ -82,19 +85,7 @@ func TestRealCheckConfigInvalidViaRPC(t *testing.T) {
 }
 
 func TestRealGenerateSchemaViaRPC(t *testing.T) {
-	_, socketPath := startLibcoreHost(t)
-	conn, err := grpc.NewClient(
-		"unix:"+socketPath,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socketPath)
-		}),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	client := husiv1.NewApplicationServiceClient(conn)
+	client := dialApplicationService(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
@@ -108,4 +99,20 @@ func TestRealGenerateSchemaViaRPC(t *testing.T) {
 		require.NotEmpty(t, resp.GetSchema(), "empty schema for %v", kind)
 		assert.Equal(t, byte('{'), resp.GetSchema()[0], "schema for %v does not look like JSON object", kind)
 	}
+}
+
+func TestRealFormatConfigViaRPC(t *testing.T) {
+	client := dialApplicationService(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	resp, err := client.FormatConfig(ctx, &husiv1.FormatConfigRequest{Config: `{"log":{"disabled":true}}`})
+	require.NoError(t, err)
+	assert.Equal(t, "{\n  \"log\": {\n    \"disabled\": true\n  }\n}\n", resp.GetConfig())
+
+	_, err = client.FormatConfig(ctx, &husiv1.FormatConfigRequest{Config: "{{{}"})
+	require.Error(t, err)
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected grpc status, got %v", err)
+	assert.Equal(t, codes.InvalidArgument, st.Code())
 }

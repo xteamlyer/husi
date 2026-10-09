@@ -21,7 +21,10 @@ import fr.husi.core.NetworkQualityPhase
 import fr.husi.core.StunPhase
 import fr.husi.core.chainHops
 import fr.husi.core.failure
-import fr.husi.libcore.Libcore
+import fr.husi.ktx.formatBytes
+import fr.husi.ktx.formatMemoryBytes
+import fr.husi.ktx.joinAddress
+import fr.husi.ktx.splitAddress
 import fr.husi.proto.daemon.Connection
 import fr.husi.proto.daemon.Group
 import fr.husi.proto.daemon.Log
@@ -82,9 +85,6 @@ internal abstract class ApiClientCommand(name: String) : CliktCommand(name) {
                     throw ProgramResult(1)
                 }
             }
-        } catch (e: LinkageError) {
-            echo(libcoreLoadFailureMessage(e), err = true)
-            throw ProgramResult(1)
         } catch (e: ProgramResult) {
             throw e
         } catch (_: Exception) {
@@ -229,19 +229,19 @@ private class ApiStatusCommand : ApiClientCommand("status") {
             "- in / ${status.connectionsOut} out"
         }
         val uplink = if (status.trafficAvailable) {
-            "${Libcore.formatBytes(status.uplink)}/s (${Libcore.formatBytes(status.uplinkTotal)} total)"
+            "${status.uplink.formatBytes()}/s (${status.uplinkTotal.formatBytes()} total)"
         } else {
             ""
         }
         val downlink = if (status.trafficAvailable) {
-            "${Libcore.formatBytes(status.downlink)}/s (${Libcore.formatBytes(status.downlinkTotal)} total)"
+            "${status.downlink.formatBytes()}/s (${status.downlinkTotal.formatBytes()} total)"
         } else {
             ""
         }
         val block = BlockWriter()
         block.addLine("State", state)
         block.addLine("Uptime", uptime)
-        block.addLine("Memory", Libcore.formatMemoryBytes(status.memory))
+        block.addLine("Memory", status.memory.formatMemoryBytes())
         block.addLine("Goroutines", status.goroutines.toString())
         block.addLine("Connections", connections)
         block.addLine("Uplink", uplink)
@@ -556,8 +556,8 @@ private class ApiConnectionShowCommand : ApiClientCommand("show") {
         block.addLine("Outbound", outbound)
         block.addLine("Chain", connection.chainListList.joinToString(" <- "))
         block.addLine("From outbound", connection.fromOutbound)
-        block.addLine("Uplink", Libcore.formatBytes(connection.uplinkTotal))
-        block.addLine("Downlink", Libcore.formatBytes(connection.downlinkTotal))
+        block.addLine("Uplink", connection.uplinkTotal.formatBytes())
+        block.addLine("Downlink", connection.downlinkTotal.formatBytes())
         block.flush()
     }
 }
@@ -872,12 +872,12 @@ private enum class ConnectionColumn(val flagName: String, val header: String) {
         override fun value(connection: Connection, rates: Map<String, ConnectionRate>): String {
             val rate = rates[connection.id]
             if (rate == null || (rate.uplink == 0L && rate.downlink == 0L)) return ""
-            return "↑${Libcore.formatBytes(rate.uplink)}/s ↓${Libcore.formatBytes(rate.downlink)}/s"
+            return "↑${rate.uplink.formatBytes()}/s ↓${rate.downlink.formatBytes()}/s"
         }
     },
     TOTAL("total", "TOTAL") {
         override fun value(connection: Connection, rates: Map<String, ConnectionRate>) =
-            "↑${Libcore.formatBytes(connection.uplinkTotal)} ↓${Libcore.formatBytes(connection.downlinkTotal)}"
+            "↑${connection.uplinkTotal.formatBytes()} ↓${connection.downlinkTotal.formatBytes()}"
     },
     ;
 
@@ -993,9 +993,8 @@ private fun connectionDestination(connection: Connection): String {
     val destination = connection.destination
     val domain = connection.domain
     if (domain.isEmpty()) return destination
-    val portIndex = destination.lastIndexOf(':')
-    if (portIndex == -1) return domain
-    return domain + destination.substring(portIndex)
+    val (_, port) = splitAddress(destination) ?: return domain
+    return joinAddress(domain, port)
 }
 
 private fun formatProcessInfo(connection: Connection): String {

@@ -1,7 +1,6 @@
 package fr.husi.repository
 
 import fr.husi.ktx.invariantDirectoryPathString
-import fr.husi.libcore.Service
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 
@@ -23,12 +22,6 @@ open class DesktopRepository(
     override val isTv = false
 
     /**
-     * Desktop no longer hosts the core in-process. Kept nullable for the
-     * shared [Repository] contract; always null on desktop after the session split.
-     */
-    override val boxService: Service? = null
-
-    /**
      * Root of everything the out-of-process core host owns, and the working
      * directory of the primary instance's host. See [coreRunDir].
      */
@@ -48,7 +41,7 @@ open class DesktopRepository(
     }
 
     /**
-     * Base path [fr.husi.core.BridgeCoreClient] dials (`…/core/` → `api.sock`).
+     * Base path [fr.husi.core.KurpcCoreClient] dials (`…/core/` → `api.sock`).
      * Mutable so [CoreHostController] can point at the system daemon socket
      * parent (`/var/run/husi`) when a privileged daemon is live.
      */

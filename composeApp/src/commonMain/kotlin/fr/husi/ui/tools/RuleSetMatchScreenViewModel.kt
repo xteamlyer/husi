@@ -4,9 +4,12 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import fr.husi.bg.routeCustomGeoDir
+import fr.husi.bg.routeGeoDir
+import fr.husi.core.CoreClient
 import fr.husi.ktx.Logs
 import fr.husi.ktx.readableMessage
-import fr.husi.libcore.Libcore
+import fr.husi.repository.resolveRepository
 import fr.husi.resources.*
 import fr.husi.ui.StringOrRes
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.koin.core.context.GlobalContext
 
 @Immutable
 internal data class RuleSetMatchUiState(
@@ -30,7 +34,9 @@ internal sealed interface RuleSetMatchUiEvent {
 }
 
 @Stable
-internal class RuleSetMatchScreenViewModel : ViewModel() {
+internal class RuleSetMatchScreenViewModel(
+    private val coreClient: CoreClient = GlobalContext.get().get(),
+) : ViewModel() {
     val uiState: StateFlow<RuleSetMatchUiState>
         field = MutableStateFlow(RuleSetMatchUiState())
 
@@ -44,19 +50,21 @@ internal class RuleSetMatchScreenViewModel : ViewModel() {
         }
     }
 
-    private val matched = mutableListOf<String>() // reuse
-
     private suspend fun scan0(keyword: String) {
-        uiState.update { it.copy(isDoing = true) }
-        matched.clear()
+        uiState.update { it.copy(matched = emptyList(), isDoing = true) }
         try {
-            Libcore.scanRuleSet(keyword) {
-                matched.add(it)
+            val externalAssetsDir = resolveRepository().externalAssetsDir
+            val ruleSetDirs = listOf(
+                routeGeoDir(externalAssetsDir),
+                routeCustomGeoDir(externalAssetsDir),
+            )
+            for (dir in ruleSetDirs) {
+                val names = coreClient.matchRuleSets(dir, keyword)
                 uiState.update { state ->
-                    state.copy(matched = matched)
+                    state.copy(matched = state.matched + names)
                 }
             }
-            if (matched.isEmpty()) {
+            if (uiState.value.matched.isEmpty()) {
                 uiEvent.emit(RuleSetMatchUiEvent.Alert(StringOrRes.Res(Res.string.not_found)))
             }
         } catch (e: Exception) {

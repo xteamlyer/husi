@@ -13,7 +13,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
 
-	"github.com/xchacha20-poly1305/husi/libcore/v2"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/coresvc"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/distro"
 	"github.com/xchacha20-poly1305/husi/libcore/v2/externalapi"
@@ -124,11 +123,6 @@ func (h *DaemonHost) run(ctx context.Context) error {
 	listenTCP := h.options.ListenAddr != ""
 	allowAll := listenTCP
 
-	err = verifyOwnCorePairSignature()
-	if err != nil {
-		return err
-	}
-
 	platformCreds, err := PlatformServerCredentials(registry, listenTCP)
 	if err != nil {
 		return E.Cause(err, "platform server credentials")
@@ -149,11 +143,10 @@ func (h *DaemonHost) run(ctx context.Context) error {
 	serverOptions = append(serverOptions, platformCreds...)
 
 	hostOpts := coresvc.HostOptions{
-		Context:          hostCtx,
-		Version:          version,
-		BuildEnvironment: libcore.BuildEnvironment(),
-		LogMaxLines:      h.options.LogMaxLines,
-		ServerOptions:    serverOptions,
+		Context:       hostCtx,
+		Version:       version,
+		LogMaxLines:   h.options.LogMaxLines,
+		ServerOptions: serverOptions,
 		// Skip default locale chain; we already installed locale+auth above.
 		SkipDefaultInterceptors: true,
 		OnStuck:                 stuck.report,
@@ -255,21 +248,6 @@ func closeExternalAPI(server *externalapi.Server, grpcServer *grpc.Server) {
 		grpcServer.Stop()
 		<-stopped
 	}
-}
-
-func verifyOwnCorePairSignature() error {
-	executablePath, err := os.Executable()
-	if err != nil {
-		return E.Cause(err, "get executable path")
-	}
-	shimPath, err := resolveExecutablePath(executablePath)
-	if err != nil {
-		return err
-	}
-	if err := VerifyCorePairSignature(shimPath); err != nil {
-		return E.Cause(err, "verify core pair")
-	}
-	return nil
 }
 
 func (h *DaemonHost) listen() (net.Listener, error) {

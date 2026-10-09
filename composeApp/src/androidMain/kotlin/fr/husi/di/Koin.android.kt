@@ -7,6 +7,9 @@ import fr.husi.compose.material3.standardPlatformMaterialApi
 import fr.husi.compose.theme.PlatformThemeApi
 import fr.husi.compose.theme.TvPlatformThemeApi
 import fr.husi.compose.theme.standardPlatformThemeApi
+import fr.husi.net.BackgroundProcessHttpFetcher
+import fr.husi.net.GrpcHttpFetcher
+import fr.husi.net.HttpFetcher
 import fr.husi.repository.AndroidRepository
 import fr.husi.repository.Repository
 import fr.husi.repository.resolveRepository
@@ -47,6 +50,12 @@ internal actual fun platformRepositoryModule(repository: Repository): Module = m
     }
 }
 
-internal actual fun platformKoinModules(): List<Module> = listOf(androidNavigationModule)
+private val androidHttpModule = module {
+    single<HttpFetcher> { BackgroundProcessHttpFetcher(GrpcHttpFetcher(coreClient = get())) }
+}
 
-internal actual fun coreClientBasePath(repository: Repository): String? = null
+internal actual fun platformKoinModules(): List<Module> =
+    listOf(androidNavigationModule, androidHttpModule)
+
+internal actual fun coreClientBasePath(repository: Repository): String =
+    (repository as AndroidRepository).context.filesDir.path

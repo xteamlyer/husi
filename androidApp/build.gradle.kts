@@ -17,7 +17,8 @@ android {
                 "x86",
             )
         }
-        ndkVersion = "29.0.14206865"
+        // Keep equal to ANDROID_NDK_VERSION in buildScript/init/version.sh.
+        ndkVersion = "30.0.16248370"
     }
     dependenciesInfo {
         includeInApk = false
@@ -32,10 +33,14 @@ android {
         buildConfig = false
     }
     namespace = "fr.husi"
-
+    compileOptions {
+        // kotlinx-datetime runs on java.time, which Android only ships from API 26.
+        isCoreLibraryDesugaringEnabled = true
+    }
 }
 
 dependencies {
+    coreLibraryDesugaring(libs.android.desugar.jdk.libs)
     implementation(project(":composeApp"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.room.runtime)
