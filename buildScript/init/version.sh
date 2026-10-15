@@ -21,7 +21,7 @@ JAVA_VERSION="${JBR_VERSION%%.*}"
 ANDROID_NDK_VERSION="30.0.16248370"
 ZIG_VERSION="0.16.0"
 # renovate: datasource=github-releases depName=goreleaser/nfpm
-NFPM_VERSION="2.47.0"
+NFPM_VERSION="2.48.0"
 # renovate: datasource=github-releases depName=AppImage/appimagetool
 APPIMAGETOOL_VERSION="1.9.1"
 # renovate: datasource=github-releases depName=AppImage/type2-runtime
@@ -29,7 +29,7 @@ APPIMAGE_RUNTIME_VERSION="20251108"
 PROTOC_VERSION="36.1"
 
 # renovate: datasource=github-releases depName=Dreamacro/maxmind-geoip
-GEOIP_VERSION="20260912"
+GEOIP_VERSION="20261012"
 
 # renovate: datasource=github-releases depName=v2fly/domain-list-community
-GEOSITE_VERSION="20261008093058"
+GEOSITE_VERSION="20261009101206"

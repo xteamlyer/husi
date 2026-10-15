@@ -12,8 +12,6 @@ internal actual val localDNSSupportRaw: Boolean
 internal actual val anchorDeviceName: String
     get() = Build.MODEL
 
-private const val PROTECT_PATH_NAME = "protect_path"
-
 internal actual val protectPath: String
     get() = resolveAndroidRepository().noBackupFilesDir
         .resolve(PROTECT_PATH_NAME)

@@ -29,7 +29,7 @@ require (
 	github.com/sagernet/quic-go v0.61.0-sing-box-mod.9
 	github.com/sagernet/sing v0.9.7-0.20260929150544-6f21f2425a95
 	github.com/sagernet/sing-anytls v0.0.0-20260928104022-580984e4d8cb
-	github.com/sagernet/sing-box v1.15.0-alpha.11
+	github.com/sagernet/sing-box v1.15.0-alpha.12
 	github.com/sagernet/sing-mux v0.3.10-0.20260929204512-caf09fe32475
 	github.com/sagernet/sing-quic v0.7.2-0.20261002084117-75c3ac4fa12b
 	github.com/sagernet/sing-snell v0.0.0-20260904135315-bc5a12ac736f
@@ -41,11 +41,12 @@ require (
 	github.com/xchacha20-poly1305/TLS-scribe v0.13.1
 	github.com/xchacha20-poly1305/anchor v0.9.0
 	github.com/xchacha20-poly1305/libping v0.10.5
+	github.com/xchacha20-poly1305/protect-go v0.2.0
 	github.com/xchacha20-poly1305/sing-trusttunnel v0.3.3-0.20260928134000-daacc8079caf
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.59.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 )
