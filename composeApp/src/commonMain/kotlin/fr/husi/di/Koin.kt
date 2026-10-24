@@ -13,10 +13,15 @@ import fr.husi.core.remote.RemoteControlManager
 import fr.husi.database.SagerDatabase
 import fr.husi.repository.Repository
 import fr.husi.tailscale.TaildropSendManager
+import fr.husi.tailscale.TailscaleSSHSessionManager
 import fr.husi.tailscale.TailscaleStatusRepository
+import fr.husi.tailscale.dashboardNoticeCounts
 import fr.husi.ui.ImportLinkInteractor
+import fr.husi.ui.dashboard.DashboardNoticeTracker
+import fr.husi.ui.dashboard.asNoticeCounts
 import fr.husi.ui.openconnect.OpenConnectAuthController
 import fr.husi.ui.openvpn.OpenVPNAuthController
+import kotlinx.coroutines.flow.map
 import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
 import org.koin.core.module.Module
@@ -49,8 +54,18 @@ private fun commonUiModule() = module {
     singleOf(::ImportLinkInteractor)
     single { OpenConnectAuthController(targets = get<RemoteControlManager>().runningTarget) }
     single { OpenVPNAuthController(targets = get<RemoteControlManager>().runningTarget) }
+    single {
+        DashboardNoticeTracker(
+            noticeCounts = listOf(
+                get<OpenConnectAuthController>().pendingChallengeKeys.map { it.asNoticeCounts() },
+                get<OpenVPNAuthController>().pendingChallengeKeys.map { it.asNoticeCounts() },
+                get<TailscaleStatusRepository>().snapshot.map { it.endpoints.dashboardNoticeCounts() },
+            ),
+        )
+    }
     single { TailscaleStatusRepository(targets = get<RemoteControlManager>().runningTarget) }
     single { TaildropSendManager(targets = get<RemoteControlManager>().runningTarget) }
+    single { TailscaleSSHSessionManager(targets = get<RemoteControlManager>().runningTarget) }
 }
 
 /**

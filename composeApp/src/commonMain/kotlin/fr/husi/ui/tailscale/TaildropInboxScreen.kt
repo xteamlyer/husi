@@ -48,7 +48,6 @@ import fr.husi.resources.more
 import fr.husi.resources.more_vert
 import fr.husi.resources.share
 import fr.husi.resources.taildrop
-import fr.husi.resources.taildrop_delete
 import fr.husi.resources.taildrop_delete_all
 import fr.husi.resources.taildrop_delete_all_confirm
 import fr.husi.resources.taildrop_empty
@@ -236,17 +235,13 @@ fun TaildropInboxScreen(
             item(key = "send-header") {
                 PreferenceCategory { Text(stringResource(Res.string.taildrop_send)) }
             }
-            item(key = "send") {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                ) {
-                    for (session in endpointSessions) {
-                        TaildropSendSessionRow(
-                            session = session,
-                            onCancel = { sendManager.cancel(session.id) },
-                            onDismiss = { sendManager.dismiss(session.id) },
-                        )
-                    }
+            preferenceGroup(key = "send") {
+                for (session in endpointSessions) {
+                    TaildropSendSessionRow(
+                        session = session,
+                        onCancel = { sendManager.cancel(session.id) },
+                        onDismiss = { sendManager.dismiss(session.id) },
+                    )
                 }
             }
         }
@@ -432,7 +427,7 @@ private fun FileOverflowMenu(
         add(InboxMenuAction(Res.string.action_open, Res.drawable.folder_open, onOpen))
         add(InboxMenuAction(Res.string.taildrop_save, Res.drawable.download, onSave))
         if (canShare) add(InboxMenuAction(Res.string.share, Res.drawable.share, onShare))
-        add(InboxMenuAction(Res.string.taildrop_delete, Res.drawable.delete, onDelete))
+        add(InboxMenuAction(Res.string.delete, Res.drawable.delete, onDelete))
     }
     InboxOverflowMenu(actions = actions)
 }

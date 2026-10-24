@@ -19,6 +19,8 @@ import fr.husi.fmt.openvpn.OpenVPNBean
 import fr.husi.fmt.shadowquic.ShadowQUICBean
 import fr.husi.fmt.shadowquic.buildShadowQUICConfig
 import fr.husi.fmt.socks.SOCKSBean
+import fr.husi.fmt.tailscale.TailcatBean
+import fr.husi.fmt.tailscale.TailscaleBean
 import fr.husi.ktx.applyDefaultValues
 import fr.husi.platform.PlatformInfo
 import fr.husi.test.HusiKoinTest
@@ -118,6 +120,42 @@ class ConfigBuilderTest : HusiKoinTest() {
     }
 
     @Test
+    fun `buildConfig should send Tailcat HTTP client through the chain detour`() = runBlocking {
+        val group = ProxyGroup(name = "group").applyDefaultValues()
+        group.id = SagerDatabase.groupDao.createGroup(group)
+
+        val local = createSocksProxy(
+            groupId = group.id,
+            order = 1,
+            name = "local",
+            host = "127.0.0.1",
+            port = 1080,
+        )
+        val tailcat = ProxyEntity(groupId = group.id, userOrder = 2).putBean(
+            TailcatBean().apply {
+                name = "tailcat"
+                serverPublicKey = "nodekey:server"
+                serverDiscoKey = "discokey:server"
+            }.applyDefaultValues(),
+        )
+        tailcat.id = SagerDatabase.proxyDao.addProxy(tailcat)
+        val chain = createChain(
+            groupId = group.id,
+            order = 3,
+            name = "chain",
+            proxies = listOf(local.id, tailcat.id),
+        )
+
+        val outbound = assertNotNull(parseOutbounds(buildConfig(chain))["tailcat"])
+
+        assertEquals("local", outbound["detour"]?.jsonPrimitive?.content)
+        assertEquals(
+            "local",
+            outbound["http_client"]?.jsonObject?.get("detour")?.jsonPrimitive?.content,
+        )
+    }
+
+    @Test
     fun `buildConfig should keep remote DNS domain through detour`() = runBlocking {
         DataStore.remoteDns.set("tcp://dns.example.com")
 
@@ -205,6 +243,53 @@ class ConfigBuilderTest : HusiKoinTest() {
             proxy.id = SagerDatabase.proxyDao.addProxy(proxy)
 
             assertEndpointDNS(buildConfig(proxy), "openvpn", SingBoxOptions.DNS_TYPE_OPENVPN)
+        }
+
+    @Test
+    fun `buildConfig should add endpoint DNS server and preferred rule for Tailscale`() =
+        runBlocking {
+            val group = ProxyGroup(name = "group").applyDefaultValues()
+            group.id = SagerDatabase.groupDao.createGroup(group)
+            val proxy = ProxyEntity(groupId = group.id, userOrder = 1).putBean(
+                TailscaleBean().apply {
+                    name = "tailscale"
+                }.applyDefaultValues(),
+            )
+            proxy.id = SagerDatabase.proxyDao.addProxy(proxy)
+
+            assertEndpointDNS(buildConfig(proxy), "tailscale", SingBoxOptions.DNS_TYPE_TAILSCALE)
+        }
+
+    @Test
+    fun `buildConfig should advertise Fake DNS ranges for Tailscale only while Fake DNS is enabled`() =
+        runBlocking {
+            disableFakeDns()
+            DataStore.networkStrategy.set(SingBoxOptions.STRATEGY_PREFER_IPV6)
+            DataStore.fakeDNSRange4.set("198.51.100.0/24")
+            DataStore.fakeDNSRange6.set("2001:2::/48")
+            val group = ProxyGroup(name = "group").applyDefaultValues()
+            group.id = SagerDatabase.groupDao.createGroup(group)
+            val proxy = ProxyEntity(groupId = group.id, userOrder = 1).putBean(
+                TailscaleBean().apply {
+                    name = "tailscale"
+                    advertiseRoutes = "10.0.0.0/8"
+                    advertiseFakeDNSRoutes = true
+                }.applyDefaultValues(),
+            )
+            proxy.id = SagerDatabase.proxyDao.addProxy(proxy)
+
+            suspend fun advertisedRoutes(): List<String>? = parseEndpoints(buildConfig(proxy))["tailscale"]!!
+                .get("advertise_routes")
+                ?.jsonArray
+                ?.map { it.jsonPrimitive.content }
+
+            assertEquals(listOf("10.0.0.0/8"), advertisedRoutes())
+
+            DataStore.enableFakeDns.set(true)
+            assertEquals(
+                listOf("10.0.0.0/8", "198.51.100.0/24", "2001:2::/48"),
+                advertisedRoutes(),
+            )
         }
 
     @Test
@@ -855,6 +940,128 @@ class ConfigBuilderTest : HusiKoinTest() {
         assertEquals(
             "Missing proxy reference in proxy set ${proxySet.id}: $missingId",
             setError.message,
+        )
+    }
+
+    @Test
+    fun `buildConfig should expand proxy set members without the expanding set`() = runBlocking {
+        val group = ProxyGroup(name = "group").applyDefaultValues()
+        group.id = SagerDatabase.groupDao.createGroup(group)
+        val first = createSocksProxy(
+            groupId = group.id,
+            order = 1,
+            name = "first",
+            host = "1.1.1.1",
+            port = 1080,
+        )
+        val second = createSocksProxy(
+            groupId = group.id,
+            order = 2,
+            name = "second",
+            host = "2.2.2.2",
+            port = 1081,
+        )
+        val auto = createProxySet(
+            groupId = group.id,
+            order = 3,
+            name = "auto",
+            management = ProxySetBean.MANAGEMENT_URLTEST,
+        )
+        val manual = createProxySet(
+            groupId = group.id,
+            order = 4,
+            name = "manual",
+            proxies = listOf(auto.id, first.id, second.id),
+        )
+        auto.proxySetBean!!.providers = listOf(ProxySetBean.Provider.Members(manual.id))
+        SagerDatabase.proxyDao.updateProxy(auto)
+
+        val result = buildConfig(manual, forTest = true)
+        val outbounds = parseOutbounds(result)
+
+        // Each occurrence of a profile gets its own outbound, so compare profile IDs, not tags.
+        fun memberIds(tag: String) = outbounds[tag]!!["outbounds"]!!.jsonArray.map {
+            result.metadata.tagToID.getValue(it.jsonPrimitive.content)
+        }
+        assertEquals(listOf(auto.id, first.id, second.id), memberIds("manual"))
+        assertEquals(listOf(first.id, second.id), memberIds("auto"))
+    }
+
+    @Test
+    fun `buildConfig should expand nested proxy set members transitively`() = runBlocking {
+        val group = ProxyGroup(name = "group").applyDefaultValues()
+        group.id = SagerDatabase.groupDao.createGroup(group)
+        val leaf = createSocksProxy(
+            groupId = group.id,
+            order = 1,
+            name = "leaf",
+            host = "1.1.1.1",
+            port = 1080,
+        )
+        val inner = createProxySet(
+            groupId = group.id,
+            order = 2,
+            name = "inner",
+            proxies = listOf(leaf.id),
+        )
+        val middle = createProxySet(
+            groupId = group.id,
+            order = 3,
+            name = "middle",
+            expandProxySetIds = listOf(inner.id),
+        )
+        val outer = createProxySet(
+            groupId = group.id,
+            order = 4,
+            name = "outer",
+            expandProxySetIds = listOf(middle.id),
+        )
+
+        val result = buildConfig(outer, forTest = true)
+        val outbounds = parseOutbounds(result)
+
+        assertEquals(
+            listOf("leaf"),
+            outbounds["outer"]!!["outbounds"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+        assertTrue("inner" !in outbounds && "middle" !in outbounds)
+    }
+
+    @Test
+    fun `buildConfig should report circular and missing proxy set expansions`() = runBlocking {
+        val group = ProxyGroup(name = "group").applyDefaultValues()
+        group.id = SagerDatabase.groupDao.createGroup(group)
+        val first = createProxySet(groupId = group.id, order = 1, name = "first")
+        val second = createProxySet(
+            groupId = group.id,
+            order = 2,
+            name = "second",
+            expandProxySetIds = listOf(first.id),
+        )
+        first.proxySetBean!!.providers = listOf(ProxySetBean.Provider.Members(second.id))
+        SagerDatabase.proxyDao.updateProxy(first)
+
+        val circularError = assertFailsWith<IllegalStateException> {
+            buildConfig(first, forTest = true)
+        }
+        assertEquals(
+            "Circular proxy set expansion: ${first.id} -> ${second.id} -> ${first.id}",
+            circularError.message,
+        )
+
+        val missingId = Long.MAX_VALUE
+        val dangling = createProxySet(
+            groupId = group.id,
+            order = 3,
+            name = "dangling",
+            expandProxySetIds = listOf(missingId),
+        )
+        val missingError = assertFailsWith<IllegalStateException> {
+            buildConfig(dangling, forTest = true)
+        }
+        assertEquals(
+            "Missing proxy set reference in proxy set ${dangling.id}: $missingId",
+            missingError.message,
         )
     }
 
@@ -3044,6 +3251,7 @@ class ConfigBuilderTest : HusiKoinTest() {
         management: Int = ProxySetBean.MANAGEMENT_SELECTOR,
         collectGroupId: Long = 0L,
         filterNotRegex: String = "",
+        expandProxySetIds: List<Long> = emptyList(),
     ): ProxyEntity {
         val proxySet = ProxyEntity(groupId = groupId, userOrder = order).putBean(
             ProxySetBean().apply {
@@ -3055,6 +3263,9 @@ class ConfigBuilderTest : HusiKoinTest() {
                     }
                     if (collectGroupId > 0L) {
                         add(ProxySetBean.Provider.Group(collectGroupId, filterNotRegex))
+                    }
+                    for (proxySetId in expandProxySetIds) {
+                        add(ProxySetBean.Provider.Members(proxySetId))
                     }
                 }
             }.applyDefaultValues(),

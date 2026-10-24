@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"os"
 	"sync"
-	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -17,14 +16,11 @@ import (
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	N "github.com/sagernet/sing/common/network"
 
 	"github.com/xchacha20-poly1305/husi/libcore/v2/oscall"
-	"github.com/xchacha20-poly1305/husi/libcore/v2/procfs"
 )
 
 type boxPlatformInterfaceWrapper struct {
-	useProcFS              bool // Store iif.UseProcFS()
 	iif                    PlatformInterface
 	networkManager         adapter.NetworkManager
 	myTunName              string
@@ -126,13 +122,11 @@ func (w *boxPlatformInterfaceWrapper) NetworkInterfaces() ([]adapter.NetworkInte
 		// isDefault := w.defaultInterface != nil && int(netInterface.Index) == w.defaultInterface.Index
 		// w.defaultInterfaceAccess.Unlock()
 		interfaces = append(interfaces, adapter.NetworkInterface{
-			Interface: control.Interface{
-				Index:     int(netInterface.Index),
-				MTU:       int(netInterface.MTU),
-				Name:      netInterface.Name,
-				Addresses: common.Map(iteratorToArray[string](netInterface.Addresses), netip.MustParsePrefix),
-				Flags:     linkFlags(uint32(netInterface.Flags)),
-			},
+			Index:            int(netInterface.Index),
+			MTU:              int(netInterface.MTU),
+			Name:             netInterface.Name,
+			Addresses:        common.Map(iteratorToArray[string](netInterface.Addresses), netip.MustParsePrefix),
+			Flags:            linkFlags(uint32(netInterface.Flags)),
 			Type:             C.InterfaceType(netInterface.Type),
 			DNSServers:       iteratorToArray[string](netInterface.DNSServer),
 			DNSSearchDomains: iteratorToArray[string](netInterface.DNSSearchDomain),
@@ -186,33 +180,6 @@ func NewConnectionOwner(userId int32, androidPackageNames StringIterator) *Conne
 }
 
 func (w *boxPlatformInterfaceWrapper) FindConnectionOwner(request *adapter.FindConnectionOwnerRequest) (*adapter.ConnectionOwner, error) {
-	if w.useProcFS {
-		var source netip.AddrPort
-		var destination netip.AddrPort
-		sourceAddr, _ := netip.ParseAddr(request.SourceAddress)
-		source = netip.AddrPortFrom(sourceAddr, uint16(request.SourcePort))
-		destAddr, _ := netip.ParseAddr(request.DestinationAddress)
-		destination = netip.AddrPortFrom(destAddr, uint16(request.DestinationPort))
-
-		var network string
-		switch request.IpProtocol {
-		case int32(syscall.IPPROTO_TCP):
-			network = N.NetworkTCP
-		case int32(syscall.IPPROTO_UDP):
-			network = N.NetworkUDP
-		default:
-			return nil, E.New("unknown protocol: ", request.IpProtocol)
-		}
-
-		uid := procfs.ResolveSocketByProcSearch(network, source, destination)
-		if uid == -1 {
-			return nil, E.New("procfs: not found")
-		}
-		return &adapter.ConnectionOwner{
-			UserId: uid,
-		}, nil
-	}
-
 	result, err := w.iif.FindConnectionOwner(request.IpProtocol, request.SourceAddress, request.SourcePort, request.DestinationAddress, request.DestinationPort)
 	if err != nil {
 		return nil, err
@@ -226,6 +193,10 @@ func (w *boxPlatformInterfaceWrapper) FindConnectionOwner(request *adapter.FindC
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformWIFIMonitor() bool {
 	return true
+}
+
+func (w *boxPlatformInterfaceWrapper) TailscaleHostname() string {
+	return w.iif.TailscaleHostname()
 }
 
 // Android not using
@@ -284,7 +255,7 @@ func (w *boxPlatformInterfaceWrapper) CreateBridge(options adapter.BridgeOptions
 	return nil, os.ErrInvalid
 }
 
-// Unused Tailscale
+// Unused Tailscale (root required)
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformShell() bool {
 	return false
@@ -308,10 +279,6 @@ func (w *boxPlatformInterfaceWrapper) LookupSFTPServer() (string, error) {
 
 func (w *boxPlatformInterfaceWrapper) ReadSystemSSHHostKey() ([]byte, error) {
 	return nil, os.ErrInvalid
-}
-
-func (w *boxPlatformInterfaceWrapper) TailscaleHostname() string {
-	return ""
 }
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformAutoRedirect() bool {

@@ -184,6 +184,7 @@ object DataStore {
     val routeAssetsLastUpdated = configurationStore.long(Key.ROUTE_ASSETS_LAST_UPDATED) { 0L }
     val logLevel = configurationStore.int(Key.LOG_LEVEL) { 3 /* WARN */ }
     val logMaxLine = configurationStore.int(Key.LOG_MAX_LINE) { 1024 }
+    val logTerminalMode = configurationStore.boolean(Key.LOG_TERMINAL_MODE) { false }
     val acquireWakeLock = configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
 
     val mixedPort = configurationStore.port(Key.MIXED_PORT, 2080)
@@ -279,5 +280,16 @@ object DataStore {
     val appUpdateUseShizuku = configurationStore.boolean(Key.APP_UPDATE_USE_SHIZUKU)
     val appUpdateLastCheckEpochDay = configurationStore.long(Key.APP_UPDATE_LAST_CHECK_EPOCH_DAY) { 0L }
     val appUpdateSkippedVersion = configurationStore.string(Key.APP_UPDATE_SKIPPED_VERSION)
+
+    // backup
+
+    val webdavURL = configurationStore.string(Key.WEBDAV_URL) { "" }
+    val webdavUsername = configurationStore.string(Key.WEBDAV_USERNAME) { "" }
+    val webdavPassword = configurationStore.string(Key.WEBDAV_PASSWORD) { "" }
+
+    // tailscale
+
+    /** JSON of the SSH login each peer was last connected with; see [fr.husi.tailscale.TailscaleSSHLogins]. */
+    val tailscaleSSHLogins = configurationStore.string(Key.TAILSCALE_SSH_LOGINS) { "" }
 
 }

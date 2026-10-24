@@ -1,6 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 
-package fr.husi.ui
+package fr.husi.ui.log
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +66,7 @@ import fr.husi.compose.SagerFabClearance
 import fr.husi.compose.SheetActionRow
 import fr.husi.compose.SimpleIconButton
 import fr.husi.compose.ansiEscape
+import fr.husi.compose.collectAsStateWithLifecycle
 import fr.husi.compose.fadingEdge
 import fr.husi.compose.material3.ScrollableDropdownMenuPopup
 import fr.husi.compose.material3.Icon
@@ -73,6 +74,7 @@ import fr.husi.compose.material3.RadioButton
 import fr.husi.compose.material3.Text
 import fr.husi.compose.setPlainText
 import fr.husi.core.remote.RemoteControlManager
+import fr.husi.database.DataStore
 import fr.husi.ktx.readableMessage
 import fr.husi.resources.Res
 import fr.husi.resources.action_copy
@@ -91,8 +93,9 @@ import fr.husi.resources.play_arrow
 import fr.husi.resources.resume
 import fr.husi.resources.scroll_to_bottom
 import fr.husi.resources.search
-import fr.husi.resources.search_go
 import fr.husi.resources.share
+import fr.husi.ui.LocalSnackbarEmitter
+import fr.husi.ui.StringOrRes
 import fr.husi.ui.remote.RemoteSessionBanner
 import fr.husi.ui.remote.RemoteTargetMenuSection
 import io.github.oikvpqya.compose.fastscroller.material3.defaultMaterialScrollbarStyle
@@ -128,6 +131,9 @@ fun LogcatScreen(
     var showBottomSheet by remember { mutableStateOf(false) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val terminalMode by DataStore.logTerminalMode.collectAsStateWithLifecycle()
+    val terminalSession = if (terminalMode) rememberLogcatTerminalSession() else null
+    val terminalState = rememberLogcatTerminalState()
     val remoteSession by remoteControl.session.collectAsStateWithLifecycle()
     val targetConnected by remoteControl.targetConnected.collectAsStateWithLifecycle()
     val subscribeLogs = remoteSession == null || targetConnected
@@ -177,7 +183,7 @@ fun LogcatScreen(
             textFieldState = searchTextFieldState,
             searchBarState = searchBarState,
             onSearch = { focusManager.clearFocus() },
-            placeholder = { Text(stringResource(Res.string.search_go)) },
+            placeholder = { Text(stringResource(Res.string.search)) },
             leadingIcon = {
                 Icon(vectorResource(Res.drawable.search), null)
             },
@@ -229,7 +235,9 @@ fun LogcatScreen(
                                 imageVector = vectorResource(Res.drawable.keyboard_arrow_down),
                                 contentDescription = stringResource(Res.string.scroll_to_bottom),
                                 onClick = {
-                                    if (uiState.logs.isNotEmpty()) scope.launch {
+                                    if (terminalSession != null) {
+                                        terminalState.scrollToBottom()
+                                    } else if (uiState.logs.isNotEmpty()) scope.launch {
                                         listState.animateScrollToItem(uiState.logs.lastIndex)
                                     }
                                 },
@@ -348,6 +356,16 @@ fun LogcatScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    } else if (terminalSession != null) {
+                        LogcatTerminal(
+                            session = terminalSession,
+                            state = terminalState,
+                            logs = uiState.logs,
+                            logLevel = uiState.logLevel,
+                            searchQuery = uiState.searchQuery,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = contentPadding,
+                        )
                     } else {
                         SelectionContainer {
                             LazyColumn(
@@ -376,7 +394,11 @@ fun LogcatScreen(
                     modifier = Modifier
                         .padding(contentPadding)
                         .fillMaxHeight(),
-                    adapter = rememberScrollbarAdapter(scrollState = listState),
+                    adapter = if (terminalSession != null) {
+                        rememberLogcatTerminalScrollbarAdapter(terminalState)
+                    } else {
+                        rememberScrollbarAdapter(scrollState = listState)
+                    },
                     style = defaultMaterialScrollbarStyle().copy(
                         thickness = 12.dp,
                     ),

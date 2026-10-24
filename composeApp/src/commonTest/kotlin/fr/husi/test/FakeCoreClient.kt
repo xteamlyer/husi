@@ -20,6 +20,8 @@ import fr.husi.proto.daemon.TaildropSendClientMessage
 import fr.husi.proto.daemon.TaildropSendServerMessage
 import fr.husi.proto.daemon.TailscaleCertificate
 import fr.husi.proto.daemon.TailscalePingResponse
+import fr.husi.proto.daemon.TailscaleSSHClientMessage
+import fr.husi.proto.daemon.TailscaleSSHServerMessage
 import fr.husi.proto.daemon.TailscaleStatusUpdate
 import fr.husi.proto.daemon.STUNTestProgress
 import fr.husi.proto.daemon.ServiceStatus
@@ -38,11 +40,19 @@ import fr.husi.proto.v1.RootCertificateStore
 import fr.husi.proto.v1.SchemaKind
 import fr.husi.proto.v1.StartServiceRequest
 import fr.husi.proto.v1.URLTestOptions
+import fr.husi.proto.v1.WebDAVDeleteRequest
+import fr.husi.proto.v1.WebDAVDownloadRequest
+import fr.husi.proto.v1.WebDAVDownloadResponse
+import fr.husi.proto.v1.WebDAVListRequest
+import fr.husi.proto.v1.WebDAVListResponse
+import fr.husi.proto.v1.WebDAVUploadRequest
 import java.io.File
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
@@ -182,6 +192,22 @@ open class FakeCoreClient : CoreClient {
         requests: Flow<TaildropSendClientMessage>,
     ): Flow<TaildropSendServerMessage> = flow {
         taildropSendRequests = requests.toList()
+    }
+
+    /** Client messages the latest [startTailscaleSSHSession] sent, recorded while it runs. */
+    val tailscaleSSHRequests = mutableListOf<TailscaleSSHClientMessage>()
+
+    /** Server messages the next [startTailscaleSSHSession] answers with once it has the start message. */
+    var tailscaleSSHResponses: List<TailscaleSSHServerMessage> = emptyList()
+
+    override fun startTailscaleSSHSession(
+        requests: Flow<TailscaleSSHClientMessage>,
+    ): Flow<TailscaleSSHServerMessage> = channelFlow {
+        tailscaleSSHRequests.clear()
+        launch {
+            requests.collect { tailscaleSSHRequests += it }
+        }
+        for (response in tailscaleSSHResponses) send(response)
     }
 
     var lastOpenVPNSubmission: OpenVPNChallengeSubmission? = null
@@ -337,6 +363,33 @@ open class FakeCoreClient : CoreClient {
     override fun httpFetch(request: HTTPFetchRequest): Flow<HTTPFetchResponse> {
         lastHttpFetch = request
         return replay(httpFetchResponses, httpFetchThrowable)
+    }
+
+    override suspend fun webdavList(request: WebDAVListRequest): WebDAVListResponse =
+        WebDAVListResponse.getDefaultInstance()
+
+    /** Every message of the last [webdavUpload], in order. */
+    var lastWebDAVUpload: List<WebDAVUploadRequest> = emptyList()
+        private set
+
+    override suspend fun webdavUpload(requests: Flow<WebDAVUploadRequest>) {
+        lastWebDAVUpload = requests.toList()
+    }
+
+    var lastWebDAVDownload: WebDAVDownloadRequest? = null
+        private set
+    var webdavDownloadResponses: List<WebDAVDownloadResponse> = emptyList()
+
+    override fun webdavDownload(request: WebDAVDownloadRequest): Flow<WebDAVDownloadResponse> {
+        lastWebDAVDownload = request
+        return replay(webdavDownloadResponses, throwable = null)
+    }
+
+    var lastWebDAVDelete: WebDAVDeleteRequest? = null
+        private set
+
+    override suspend fun webdavDelete(request: WebDAVDeleteRequest) {
+        lastWebDAVDelete = request
     }
 
     override suspend fun ping(protocol: PingProtocol, address: String, port: Int, timeoutMs: Int): Int = 0

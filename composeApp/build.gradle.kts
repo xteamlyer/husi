@@ -146,6 +146,10 @@ data class DesktopTarget(
         setOf(
             "nucleus/native/${platform.jnaName}-${arch.nucleusName}/",
         )
+    /** Where libghostty keeps its JNI library for every target, one directory each. */
+    val ghosttyNativePrefix: String = "io/github/xchacha20_poly1305/libghostty/native/"
+    /** libghostty names its native directories with the same OS and arch tokens as kurpc. */
+    val ghosttyNativeKeepPrefix: String = "$ghosttyNativePrefix${platform.kurpcName}-${arch.kurpcName}/"
     val skikoNativeKeepEntries: Set<String> =
         buildSet {
             val baseName = "skiko-${platform.composeDependencyId}-${arch.composeDependencyId}"
@@ -347,13 +351,11 @@ kotlin {
         val commonMain = getByName("commonMain") {
             dependencies {
                 implementation(libs.kurpc)
-                implementation(libs.jetbrains.compose.runtime)
                 implementation(libs.jetbrains.compose.foundation)
                 implementation(libs.jetbrains.compose.material3)
                 implementation(libs.jetbrains.compose.animation.graphics)
                 implementation(libs.jetbrains.compose.components.resources)
                 implementation(libs.jetbrains.compose.ui.tooling.preview)
-                implementation(libs.jetbrains.lifecycle.viewmodel.compose)
                 implementation(libs.jetbrains.lifecycle.viewmodel.navigation3)
                 implementation(libs.jetbrains.lifecycle.runtime.compose)
                 implementation(libs.jetbrains.navigation3.ui)
@@ -368,23 +370,17 @@ kotlin {
                 implementation(libs.ini4j)
                 implementation(libs.okio)
                 implementation(libs.compose.preference)
-                implementation(libs.fastscroller.core)
                 implementation(libs.fastscroller.material3)
-                implementation(libs.filekit.core)
                 implementation(libs.filekit.dialogs.compose)
                 implementation(libs.aboutlibraries.compose.m3)
-                implementation(libs.haze)
-                implementation(libs.haze.blur)
                 implementation(libs.haze.blur.material3)
                 implementation(libs.zxing.core)
                 implementation(libs.kpuri)
+                implementation(libs.libghostty.compose)
                 implementation(project(":proto"))
                 implementation(project(":library:DragDropSwipeLazyColumn"))
 
                 implementation(project.dependencies.platform(libs.koin.bom))
-                implementation(libs.koin.core)
-                implementation(libs.koin.core.viewmodel)
-                implementation(libs.koin.compose)
                 implementation(libs.koin.compose.viewmodel)
                 implementation(libs.koin.compose.navigation3)
             }
@@ -402,7 +398,6 @@ kotlin {
 
                 implementation(libs.androidx.appcompat)
                 implementation(libs.androidx.work.multiprocess)
-                implementation(libs.androidx.datastore)
                 implementation(libs.androidx.compose.ui.tooling)
                 implementation(libs.androidx.activity.compose)
 
@@ -414,7 +409,6 @@ kotlin {
 
                 implementation(libs.accompanist.drawablepainter)
 
-                implementation(libs.androidx.camera.core)
                 implementation(libs.androidx.camera.lifecycle)
                 implementation(libs.androidx.camera.camera2)
                 implementation(libs.androidx.camera.compose)
@@ -560,6 +554,8 @@ tasks.matching { it.name == "packageReleaseUberJarForCurrentOS" }.configureEach 
         val jnaNativeKeepPrefixes = desktopTarget.jnaNativeKeepPrefixes
         val composeTrayNativeKeepPrefixes = desktopTarget.composeTrayNativeKeepPrefixes
         val nucleusNativeKeepPrefixes = desktopTarget.nucleusNativeKeepPrefixes
+        val ghosttyNativePrefix = desktopTarget.ghosttyNativePrefix
+        val ghosttyNativeKeepPrefix = desktopTarget.ghosttyNativeKeepPrefix
         val skikoNativeKeepEntries = desktopTarget.skikoNativeKeepEntries
         val targetJar = layout.buildDirectory.file("compose/jars/$desktopArtifactBaseName.jar")
 
@@ -596,6 +592,14 @@ tasks.matching { it.name == "packageReleaseUberJarForCurrentOS" }.configureEach 
             if (
                 entryPath.startsWith("nucleus/native/") &&
                 nucleusNativeKeepPrefixes.none(entryPath::startsWith)
+            ) {
+                exclude()
+                return@eachFile
+            }
+
+            if (
+                entryPath.startsWith(ghosttyNativePrefix) &&
+                !entryPath.startsWith(ghosttyNativeKeepPrefix)
             ) {
                 exclude()
                 return@eachFile
