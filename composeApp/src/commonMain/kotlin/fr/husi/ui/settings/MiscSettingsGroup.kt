@@ -1,11 +1,15 @@
 package fr.husi.ui.settings
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
 import fr.husi.CertProvider
 import fr.husi.compose.IconMaskColors
 import fr.husi.compose.IconMaskShapes
@@ -25,6 +29,8 @@ import fr.husi.resources.Res
 import fr.husi.resources.advanced_features
 import fr.husi.resources.advanced_features_summary
 import fr.husi.resources.apps
+import fr.husi.resources.auto_detect_ip
+import fr.husi.resources.auto_detect_ip_summary
 import fr.husi.resources.cast_connected
 import fr.husi.resources.cert_chrome
 import fr.husi.resources.certificate_authority
@@ -35,6 +41,7 @@ import fr.husi.resources.developer_mode
 import fr.husi.resources.fast_forward
 import fr.husi.resources.follow_system
 import fr.husi.resources.ip_test_servers
+import fr.husi.resources.ip_test_servers_description
 import fr.husi.resources.ip_test_servers_summary
 import fr.husi.resources.mozilla
 import fr.husi.resources.push_pin
@@ -70,8 +77,8 @@ internal fun MiscSettingsGroup(
         },
         summary = { Text(contentOrUnset(connectionTestUrlValue)) },
         valueToText = { it },
-    ) { value, onValueChange, onOk ->
-        LinkOrContentTextField(value, onValueChange, onOk)
+    ) { state, onOk ->
+        LinkOrContentTextField(state, onOk)
     }
 
     val ipTestServers by DataStore.ipTestServers.collectAsStateWithLifecycle()
@@ -83,9 +90,29 @@ internal fun MiscSettingsGroup(
         valueToText = { it },
         icon = { MaskedIcon(Res.drawable.cast_connected, color = IconMaskColors.IconCyan) },
         summary = { Text(stringResource(Res.string.ip_test_servers_summary)) },
-    ) { value, onValueChange, onOk ->
-        MultilineTextField(value, onValueChange, onOk)
+    ) { state, onOk ->
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text(
+                text = stringResource(Res.string.ip_test_servers_description),
+                style = MaterialTheme.typography.bodySmall,
+            )
+            MultilineTextField(state, onOk)
+        }
     }
+    val autoDetectIP by DataStore.autoDetectIP.collectAsStateWithLifecycle()
+    SwitchPreference(
+        value = autoDetectIP,
+        onValueChange = { DataStore.autoDetectIP.setBlocking(it) },
+        title = { Text(stringResource(Res.string.auto_detect_ip)) },
+        summary = { Text(stringResource(Res.string.auto_detect_ip_summary)) },
+        icon = {
+            MaskedIcon(
+                resource = Res.drawable.cast_connected,
+                color = IconMaskColors.IconCoral,
+                shape = IconMaskShapes.risk(),
+            )
+        },
+    )
 
     val connectionTestConcurrentValue by DataStore.connectionTestConcurrent.collectAsStateWithLifecycle()
     var concurrentPreview by remember { mutableFloatStateOf(connectionTestConcurrentValue.toFloat()) }
@@ -210,7 +237,7 @@ internal fun MiscSettingsGroup(
             )
         },
         valueToText = { it },
-    ) { value, onValueChange, onOk ->
-        MultilineTextField(value, onValueChange, onOk)
+    ) { state, onOk ->
+        MultilineTextField(state, onOk)
     }
 }

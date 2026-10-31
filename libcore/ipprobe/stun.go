@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 // Mod from https://github.com/tailscale/tailscale/blob/3a38840ccc7748643bfb2ce260caca7b4b918f3e/net/stun/stun.go
-// Removed software marks (https://github.com/tailscale/tailscale/blob/3a38840ccc7748643bfb2ce260caca7b4b918f3e/net/stun/stun.go#L29)
+// Removed software identification (https://github.com/tailscale/tailscale/blob/3a38840ccc7748643bfb2ce260caca7b4b918f3e/net/stun/stun.go#L29)
 
 package ipprobe
 
@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
+	"io"
 	"net"
 	"net/netip"
 )
@@ -31,6 +32,9 @@ const (
 	magicCookie    = "\x21\x12\xa4\x42"
 	lenFingerprint = 8 // 2+byte header + 2-byte length + 4-byte crc32
 	headerLen      = 20
+
+	maxMessageSize  = 65532 // The biggest multiple of 4 under max uint16.
+	maxResponseSize = headerLen + maxMessageSize
 )
 
 // stunTxID is a transaction ID.
@@ -39,9 +43,7 @@ type stunTxID [12]byte
 // newSTUNTxID returns a new random stunTxID.
 func newSTUNTxID() stunTxID {
 	var tx stunTxID
-	if _, err := crand.Read(tx[:]); err != nil {
-		panic(err)
-	}
+	_, _ = crand.Read(tx[:])
 	return tx
 }
 
@@ -51,31 +53,24 @@ func stunRequest(tID stunTxID) []byte {
 	// STUN header, RFC5389 Section 6.
 	b := make([]byte, 0, headerLen+lenFingerprint)
 	b = append(b, bindingRequest...)
-	b = appendU16(b, uint16(lenFingerprint)) // number of bytes following header
+	b = binary.BigEndian.AppendUint16(b, uint16(lenFingerprint)) // number of bytes following header
 	b = append(b, magicCookie...)
 	b = append(b, tID[:]...)
 
 	// Attribute FINGERPRINT, RFC5389 Section 15.5.
 	fp := fingerPrint(b)
-	b = appendU16(b, attrNumFingerprint)
-	b = appendU16(b, 4)
-	b = appendU32(b, fp)
+	b = binary.BigEndian.AppendUint16(b, attrNumFingerprint)
+	b = binary.BigEndian.AppendUint16(b, 4)
+	b = binary.BigEndian.AppendUint32(b, fp)
 
 	return b
 }
 
-func fingerPrint(b []byte) uint32 { return crc32.ChecksumIEEE(b) ^ 0x5354554e }
-
-func appendU16(b []byte, v uint16) []byte {
-	return append(b, byte(v>>8), byte(v))
-}
-
-func appendU32(b []byte, v uint32) []byte {
-	return append(b, byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+func fingerPrint(b []byte) uint32 {
+	return crc32.ChecksumIEEE(b) ^ 0x5354554e
 }
 
 // parseBindingRequest parses a STUN binding request.
-
 func parseBindingRequest(b []byte) (stunTxID, error) {
 	if !isSTUN(b) {
 		return stunTxID{}, errNotSTUN
@@ -152,17 +147,18 @@ func stunResponse(txID stunTxID, addrPort netip.AddrPort) []byte {
 
 	// Header
 	b = append(b, 0x01, 0x01) // success
-	b = appendU16(b, uint16(attrsLen))
+	b = binary.BigEndian.AppendUint16(b, uint16(attrsLen))
 	b = append(b, magicCookie...)
 	b = append(b, txID[:]...)
 
 	// Attributes (well, one)
-	b = appendU16(b, attrXorMappedAddress)
-	b = appendU16(b, uint16(4+addr.BitLen()/8))
+	b = binary.BigEndian.AppendUint16(b, attrXorMappedAddress)
+	b = binary.BigEndian.AppendUint16(b, uint16(4+addr.BitLen()/8))
 	b = append(b,
 		0, // unused byte
-		fam)
-	b = appendU16(b, addrPort.Port()^0x2112) // first half of magicCookie
+		fam,
+	)
+	b = binary.BigEndian.AppendUint16(b, addrPort.Port()^0x2112) // first half of magicCookie
 	ipa := addr.As16()
 	for i, o := range ipa[16-addr.BitLen()/8:] {
 		if i < 4 {
@@ -176,53 +172,102 @@ func stunResponse(txID stunTxID, addrPort netip.AddrPort) []byte {
 
 // parseSTUNResponse parses a successful binding response STUN packet.
 // The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
-func parseSTUNResponse(b []byte) (tID stunTxID, addr netip.AddrPort, err error) {
+func parseSTUNResponse(b []byte) (stunTxID, netip.AddrPort, error) {
 	if !isSTUN(b) {
-		return tID, netip.AddrPort{}, errNotSTUN
+		return stunTxID{}, netip.AddrPort{}, errNotSTUN
 	}
-	copy(tID[:], b[8:8+len(tID)])
-	if b[0] != 0x01 || b[1] != 0x01 {
-		return tID, netip.AddrPort{}, errNotSuccessResponse
+	if int(binary.BigEndian.Uint16(b[2:4])) > len(b)-headerLen {
+		return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
 	}
-	attrsLen := int(binary.BigEndian.Uint16(b[2:4]))
-	b = b[headerLen:] // remove STUN header
-	if attrsLen > len(b) {
-		return tID, netip.AddrPort{}, errMalformedAttrs
-	} else if len(b) > attrsLen {
-		b = b[:attrsLen] // trim trailing packet bytes
+	return parseSTUNResponseReader(bytes.NewReader(b))
+}
+
+// parseSTUNResponseReader reads one binding response without buffering the whole
+// message. It consumes every attribute, leaving any following message unread.
+func parseSTUNResponseReader(reader io.Reader) (tID stunTxID, addr netip.AddrPort, err error) {
+	var header [headerLen]byte
+	_, err = io.ReadFull(reader, header[:])
+	if err != nil {
+		return
+	}
+	if !isSTUN(header[:]) {
+		return stunTxID{}, netip.AddrPort{}, errNotSTUN
+	}
+	copy(tID[:], header[8:])
+	if header[0] != 0x01 || header[1] != 0x01 {
+		return stunTxID{}, netip.AddrPort{}, errNotSuccessResponse
+	}
+	remaining := int(binary.BigEndian.Uint16(header[2:4]))
+	if remaining > maxMessageSize || remaining%4 != 0 {
+		return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
 	}
 
 	var fallbackAddr netip.AddrPort
-
-	// Read through the attributes.
-	// The addr+port reported by XOR-MAPPED-ADDRESS
-	// is the canonical value. If the attribute is not
-	// present but the STUN server responds with
-	// MAPPED-ADDRESS we fall back to it.
-	if err := forEachSTUNAttr(b, func(attrType uint16, attr []byte) error {
+	var attrHeader [4]byte
+	// Attr header with IPv6 length is enough
+	var fieldBuffer [4 + net.IPv6len]byte
+	for remaining > 0 {
+		if remaining < len(attrHeader) {
+			return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
+		}
+		_, err := io.ReadFull(reader, attrHeader[:])
+		if err != nil {
+			return stunTxID{}, netip.AddrPort{}, err
+		}
+		remaining -= len(attrHeader)
+		attrType := binary.BigEndian.Uint16(attrHeader[:2])
+		attrLen := int(binary.BigEndian.Uint16(attrHeader[2:]))
+		paddedLen := (attrLen + 3) &^ 3
+		if paddedLen > remaining {
+			return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
+		}
+		valueLen := 0
 		switch attrType {
-		case attrXorMappedAddress, attrXorMappedAddressAlt:
-			ipSlice, port, err := xorMappedAddress(tID, attr)
+		case attrMappedAddress, attrXorMappedAddress, attrXorMappedAddressAlt:
+			if attrLen < 4 {
+				return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
+			}
+			_, err := io.ReadFull(reader, fieldBuffer[:4])
 			if err != nil {
-				return err
+				return stunTxID{}, netip.AddrPort{}, err
 			}
-			if ip, ok := netip.AddrFromSlice(ipSlice); ok {
-				addr = netip.AddrPortFrom(ip.Unmap(), port)
+			addrLen := familyAddrLen(fieldBuffer[1])
+			valueLen = 4 + addrLen
+			if addrLen == 0 || valueLen > attrLen {
+				return stunTxID{}, netip.AddrPort{}, errMalformedAttrs
 			}
-		case attrMappedAddress:
-			ipSlice, port, err := mappedAddress(attr)
+			_, err = io.ReadFull(reader, fieldBuffer[4:valueLen])
 			if err != nil {
-				return errMalformedAttrs
+				return stunTxID{}, netip.AddrPort{}, err
 			}
-			if ip, ok := netip.AddrFromSlice(ipSlice); ok {
-				fallbackAddr = netip.AddrPortFrom(ip.Unmap(), port)
+			if attrType == attrMappedAddress {
+				ipSlice, port, err := mappedAddress(fieldBuffer[:valueLen])
+				if err != nil {
+					return stunTxID{}, netip.AddrPort{}, err
+				}
+				if ip, loaded := netip.AddrFromSlice(ipSlice); loaded {
+					fallbackAddr = netip.AddrPortFrom(ip.Unmap(), port)
+				}
+			} else {
+				ipSlice, port, err := xorMappedAddress(tID, fieldBuffer[:valueLen])
+				if err != nil {
+					return stunTxID{}, netip.AddrPort{}, err
+				}
+				if ip, loaded := netip.AddrFromSlice(ipSlice); loaded {
+					addr = netip.AddrPortFrom(ip.Unmap(), port)
+				}
 			}
 		}
-		return nil
-	}); err != nil {
-		return stunTxID{}, netip.AddrPort{}, err
+		if unread := paddedLen - valueLen; unread > 0 {
+			_, err := io.CopyN(io.Discard, reader, int64(unread))
+			if err != nil {
+				return stunTxID{}, netip.AddrPort{}, err
+			}
+		}
+		remaining -= paddedLen
 	}
 
+	// XOR-MAPPED-ADDRESS takes precedence over MAPPED-ADDRESS.
 	if addr.IsValid() {
 		return tID, addr, nil
 	}
@@ -275,7 +320,7 @@ func mappedAddress(b []byte) (addr []byte, port uint16, err error) {
 	if len(b) < 4 {
 		return nil, 0, errMalformedAttrs
 	}
-	port = uint16(b[2])<<8 | uint16(b[3])
+	port = binary.BigEndian.Uint16(b[2:4])
 	addrField := b[4:]
 	addrLen := familyAddrLen(b[1])
 	if addrLen == 0 {

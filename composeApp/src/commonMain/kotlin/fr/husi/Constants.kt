@@ -18,9 +18,9 @@ const val CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
 const val NETWORK_QUALITY_CONFIG_URL = "https://mensura.cdn-apple.com/api/v1/gm/config"
 
 // Note that nextcloud runs TCP without TLS on 443.
-const val STUN_SERVERS = """stuns://turn.matrix.org:443
-stuns://turn.cloudflare.com:443
-stun://stun.nextcloud.com:443?transport=tcp
+const val STUN_SERVERS = """turns:turn.matrix.org:443
+turns:turn.cloudflare.com:443
+turn:stun.nextcloud.com:443?transport=tcp
 """
 
 // Actually no "auto" domain strategy. It is legacy "let the core decide",
@@ -104,6 +104,7 @@ object Key {
     const val SHOW_DIRECT_SPEED = "showDirectSpeed"
     const val LOCAL_DNS_PORT = "portLocalDns"
 
+    const val AUTO_DETECT_IP = "autoDetectIP"
     const val IP_TEST_SERVERS = "ipTestServers"
     const val CONNECTION_TEST_URL = "connectionTestURL"
     const val CONNECTION_TEST_CONCURRENT = "connectionTestConcurrent"
